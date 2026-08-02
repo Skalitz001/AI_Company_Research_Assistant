@@ -2,9 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import re
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 from typing import Any, Awaitable, Callable
@@ -13,9 +11,9 @@ import httpx
 
 from ..config import Settings
 from ..security.url import UnsafeURLError
-from ..schemas import CompanyInfo, Competitor, ProgressEvent, ResearchReport, Source
+from ..schemas import Competitor, ProgressEvent, ResearchReport, Source
 from .openrouter import OpenRouterClient, OpenRouterError
-from .serper import OfficialSite, SearchEvidence, SerperClient, SerperError
+from .serper import SearchEvidence, SerperClient, SerperError
 
 try:
     from .crawler import crawl_site, normalize_url, validate_target_url
@@ -73,6 +71,62 @@ async def _emit(callback: ProgressCallback | None, stage: str, percent: int, mes
         result = callback(event)
         if asyncio.iscoroutine(result):
             await result
+async def _resolve_report_competitors(
+    proposed: list[Competitor],
+    *,
+    serper: SerperClient,
+    root_url: str,
+    can_resolve: bool,
+) -> tuple[list[Competitor], list[str]]:
+    """Resolve model-proposed names to safe official sites in parallel."""
+    proposals: list[Competitor] = []
+    seen_names: set[str] = set()
+    for competitor in proposed[:3]:
+        key = competitor.name.casefold().strip()
+        if key and key not in seen_names:
+            seen_names.add(key)
+            proposals.append(competitor)
+    if not proposals:
+        return [], []
+    if not can_resolve:
+        return [], ["Competitor websites could not be verified from public search evidence."]
+
+    root_host = urlparse(root_url).hostname
+
+    async def resolve_one(candidate: Competitor) -> Competitor | None:
+        try:
+            official = await serper.resolve_official_site(candidate.name)
+            if official is None:
+                return None
+            safe = await validate_target_url(official.website)
+            website = normalize_url(safe)
+            if urlparse(website).hostname == root_host:
+                return None
+            return candidate.model_copy(update={"website": website})
+        except Exception:
+            return None
+
+    resolved = await asyncio.gather(*(resolve_one(candidate) for candidate in proposals))
+    verified: list[Competitor] = []
+    verified_names: set[str] = set()
+    seen_urls: set[str] = set()
+    for candidate in resolved:
+        if candidate is None:
+            continue
+        name_key = candidate.name.casefold()
+        url_key = candidate.website.casefold()
+        if name_key in verified_names or url_key in seen_urls:
+            continue
+        verified_names.add(name_key)
+        seen_urls.add(url_key)
+        verified.append(candidate)
+    warnings = (
+        ["Some proposed competitors could not be verified and were omitted."]
+        if len(verified) < len(proposals)
+        else []
+    )
+    return verified, warnings
+
 
 
 async def run_research(
@@ -92,6 +146,7 @@ async def run_research(
     serper = SerperClient(client, settings)
     search_evidence: list[dict[str, Any]] = []
     warnings: list[str] = []
+    competitor_search_evidence: SearchEvidence | None = None
 
     await _emit(progress, "resolving", 10, "Finding the official website")
     if direct:
@@ -163,27 +218,12 @@ async def run_research(
             warnings.append("Public search enrichment was unavailable; using website evidence.")
         if competitors_search:
             search_evidence.append({"query": competitors_search.query, "results": _evidence_search(competitors_search)})
+            competitor_search_evidence = competitors_search
         else:
             warnings.append("Competitor discovery was unavailable.")
     elif direct:
         warnings.append("Public search enrichment was unavailable; using website evidence.")
 
-    # Candidate verification is intentionally bounded to three sites and one extra search call is not needed.
-    candidates: list[dict[str, str]] = []
-    for group in search_evidence:
-        for result in group.get("results", []):
-            title, url = result.get("title", ""), result.get("url", "")
-            if url and title and urlparse(url).hostname and urlparse(url).hostname != urlparse(root_url).hostname:
-                candidates.append({"name": title.split(" - ")[0][:160], "url": url})
-    verified: list[Competitor] = []
-    for candidate in candidates[:3]:
-        try:
-            safe = await validate_target_url(candidate["url"])
-            parsed = urlparse(normalize_url(safe))
-            if parsed.hostname and parsed.hostname != urlparse(root_url).hostname:
-                verified.append(Competitor(name=candidate["name"], website=normalize_url(safe), fit="Candidate from public search evidence"))
-        except Exception:
-            continue
 
     await _emit(progress, "analyzing", 75, "Generating structured insights")
     evidence = {
@@ -193,7 +233,6 @@ async def run_research(
         "website_pages": page_text,
         "website_sources": website_sources,
         "search_results": search_evidence,
-        "verified_competitors": [item.model_dump() for item in verified],
     }
     async def analyze_with_retry() -> ResearchReport:
         adapter = OpenRouterClient(client, settings)
@@ -219,7 +258,6 @@ async def run_research(
 
     report = await analyze_with_retry()
 
-    await _emit(progress, "finalizing", 95, "Validating the report")
     company = report.company.model_copy(update={"name": company_name, "website": root_url})
     deterministic_sources = []
     for source in website_sources[:15]:
@@ -234,32 +272,17 @@ async def run_research(
         if source.url not in seen_urls:
             seen_urls.add(source.url)
             unique_sources.append(source)
-    validated_model_competitors: list[Competitor] = []
-    for competitor in report.competitors:
-        try:
-            safe_website = await validate_target_url(competitor.website)
-            canonical_website = normalize_url(safe_website)
-            if urlparse(canonical_website).hostname == urlparse(root_url).hostname:
-                continue
-            validated_model_competitors.append(
-                competitor.model_copy(update={"website": canonical_website})
-            )
-        except Exception:
-            warnings.append(f"Skipped an unsafe competitor website for {competitor.name}.")
-    merged_competitors: list[Competitor] = []
-    seen_competitor_names: set[str] = set()
-    seen_competitor_urls: set[str] = set()
-    for competitor in [*verified, *validated_model_competitors]:
-        name_key = competitor.name.casefold()
-        url_key = competitor.website.casefold()
-        if name_key in seen_competitor_names or url_key in seen_competitor_urls:
-            continue
-        seen_competitor_names.add(name_key)
-        seen_competitor_urls.add(url_key)
-        merged_competitors.append(competitor)
+    resolved_competitors, competitor_warnings = await _resolve_report_competitors(
+        report.competitors,
+        serper=serper,
+        root_url=root_url,
+        can_resolve=bool(settings.serper_api_key and competitor_search_evidence),
+    )
+    warnings.extend(competitor_warnings)
+    await _emit(progress, "finalizing", 95, "Validating the report")
     report = report.model_copy(update={
         "company": company,
-        "competitors": merged_competitors[:5],
+        "competitors": resolved_competitors[:5],
         "sources": unique_sources[:15],
         "warnings": list(dict.fromkeys(warnings + report.warnings))[:10],
         "generated_at": datetime.now(timezone.utc),
