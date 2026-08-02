@@ -74,6 +74,42 @@ def _has_meaningful_company_evidence(
         )
         for group in evidence
     )
+def _candidate_evidence_texts(evidence: SearchEvidence | None) -> list[str]:
+    if evidence is None:
+        return []
+    texts: list[str] = []
+    for row in evidence.organic[:8]:
+        if not isinstance(row, dict):
+            continue
+        title = str(row.get("title", "")).strip()
+        snippet = str(row.get("snippet", "")).strip()
+        if title or snippet:
+            texts.append(f"{title} {snippet}")
+    if evidence.knowledge_graph:
+        title = str(evidence.knowledge_graph.get("title", "")).strip()
+        description = str(evidence.knowledge_graph.get("description", "")).strip()
+        if title or description:
+            texts.append(f"{title} {description}")
+    return texts
+
+
+def _name_tokens(value: str) -> list[str]:
+    return [token.casefold() for token in re.findall(r"[a-z0-9]+", value)]
+
+
+def _matches_candidate_evidence(name: str, evidence: SearchEvidence | None) -> bool:
+    name_tokens = _name_tokens(name)
+    compact_name = "".join(name_tokens)
+    if not compact_name:
+        return False
+    for text in _candidate_evidence_texts(evidence):
+        text_tokens = _name_tokens(text)
+        compact_text = "".join(text_tokens)
+        if len(name_tokens) > 1 and compact_name in compact_text:
+            return True
+        if set(name_tokens).issubset(set(text_tokens)):
+            return True
+    return False
 
 
 def _crawler_parts(result: Any) -> tuple[dict[str, Any], str, list[dict[str, Any]], list[str]]:
@@ -95,18 +131,29 @@ async def _resolve_report_competitors(
     *,
     serper: SerperClient,
     root_url: str,
+    candidate_evidence: SearchEvidence | None,
     can_resolve: bool,
 ) -> tuple[list[Competitor], list[str]]:
-    """Resolve model-proposed names to safe official sites in parallel."""
+    """Resolve only names represented in competitor search evidence."""
+    if not proposed:
+        return [], []
+    if not _candidate_evidence_texts(candidate_evidence):
+        return [], ["Competitor discovery returned no candidate evidence."]
+
     proposals: list[Competitor] = []
     seen_names: set[str] = set()
+    omitted_unmatched = 0
     for competitor in proposed[:3]:
         key = competitor.name.casefold().strip()
-        if key and key not in seen_names:
-            seen_names.add(key)
+        if not key or key in seen_names:
+            continue
+        seen_names.add(key)
+        if _matches_candidate_evidence(competitor.name, candidate_evidence):
             proposals.append(competitor)
+        else:
+            omitted_unmatched += 1
     if not proposals:
-        return [], []
+        return [], ["Proposed competitor names were not present in competitor evidence."]
     if not can_resolve:
         return [], ["Competitor websites could not be verified from public search evidence."]
 
@@ -139,11 +186,11 @@ async def _resolve_report_competitors(
         verified_names.add(name_key)
         seen_urls.add(url_key)
         verified.append(candidate)
-    warnings = (
-        ["Some proposed competitors could not be verified and were omitted."]
-        if len(verified) < len(proposals)
-        else []
-    )
+    warnings: list[str] = []
+    if omitted_unmatched:
+        warnings.append("Some proposed competitors were not present in competitor evidence and were omitted.")
+    if len(verified) < len(proposals):
+        warnings.append("Some proposed competitors could not be verified and were omitted.")
     return verified, warnings
 
 
@@ -302,7 +349,8 @@ async def run_research(
         report.competitors,
         serper=serper,
         root_url=root_url,
-        can_resolve=bool(settings.serper_api_key and competitor_search_evidence),
+        candidate_evidence=competitor_search_evidence,
+        can_resolve=bool(settings.serper_api_key),
     )
     warnings.extend(competitor_warnings)
     await _emit(progress, "finalizing", 95, "Validating the report")

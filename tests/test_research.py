@@ -3,6 +3,7 @@ import json
 import httpx
 import pytest
 
+from backend.app.schemas import Competitor
 from backend.app.config import Settings
 from backend.app.services import crawler
 from backend.app.security.url import UnsafeURLError
@@ -118,6 +119,11 @@ async def test_search_articles_cannot_become_competitor_websites(monkeypatch):
                 query=query,
                 knowledge_graph={},
                 organic=[
+                    {
+                        "title": "RivalCo competitor comparison",
+                        "link": "https://rivalco.example",
+                        "snippet": "RivalCo competes in workflow software.",
+                    },
                     {
                         "title": "Acme competitors article",
                         "link": "https://news.example/acme-competitors",
@@ -329,3 +335,77 @@ async def test_direct_url_with_only_competitor_evidence_fails(monkeypatch):
             )
 
     assert caught.value.code == "INSUFFICIENT_EVIDENCE"
+
+
+@pytest.mark.asyncio
+async def test_empty_competitor_evidence_does_not_resolve_model_name(monkeypatch):
+    calls: list[str] = []
+
+    async def fake_resolve(self, company: str) -> OfficialSite | None:
+        calls.append(company)
+        return OfficialSite(
+            company,
+            "https://resolved.example",
+            0.9,
+            SearchEvidence(query=f"{company} official website", knowledge_graph={}, organic=[]),
+        )
+
+    monkeypatch.setattr(research_service.SerperClient, "resolve_official_site", fake_resolve)
+    evidence = SearchEvidence(query="Acme competitors", knowledge_graph={}, organic=[])
+    proposed = [Competitor(name="RivalCo", website="https://article.example", fit="Candidate")]
+
+    async with httpx.AsyncClient() as client:
+        serper = research_service.SerperClient(client, Settings(serper_api_key="key"))
+        resolved, warnings = await research_service._resolve_report_competitors(
+            proposed,
+            serper=serper,
+            root_url="https://acme.example/",
+            candidate_evidence=evidence,
+            can_resolve=True,
+        )
+
+    assert resolved == []
+    assert calls == []
+    assert warnings == ["Competitor discovery returned no candidate evidence."]
+
+
+@pytest.mark.asyncio
+async def test_unrelated_model_name_is_not_resolved(monkeypatch):
+    calls: list[str] = []
+
+    async def fake_resolve(self, company: str) -> OfficialSite | None:
+        calls.append(company)
+        return OfficialSite(
+            company,
+            "https://resolved.example",
+            0.9,
+            SearchEvidence(query=f"{company} official website", knowledge_graph={}, organic=[]),
+        )
+
+    monkeypatch.setattr(research_service.SerperClient, "resolve_official_site", fake_resolve)
+    evidence = SearchEvidence(
+        query="Acme competitors",
+        knowledge_graph={},
+        organic=[
+            {
+                "title": "RivalCo competitor comparison",
+                "link": "https://rivalco.example",
+                "snippet": "RivalCo serves the same market.",
+            }
+        ],
+    )
+    proposed = [Competitor(name="UnrelatedCorp", website="https://unrelated.example", fit="Candidate")]
+
+    async with httpx.AsyncClient() as client:
+        serper = research_service.SerperClient(client, Settings(serper_api_key="key"))
+        resolved, warnings = await research_service._resolve_report_competitors(
+            proposed,
+            serper=serper,
+            root_url="https://acme.example/",
+            candidate_evidence=evidence,
+            can_resolve=True,
+        )
+
+    assert resolved == []
+    assert calls == []
+    assert warnings == ["Proposed competitor names were not present in competitor evidence."]
