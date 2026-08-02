@@ -45,8 +45,8 @@ def _error_response(error: ResearchError, status: int) -> JSONResponse:
 @router.post("/research")
 async def research(payload: ResearchRequest, request: Request):
     settings = get_settings()
-    if not settings.providers_ready:
-        return _error_response(ResearchError(code="CONFIG_MISSING", message="Research providers are not configured.", retryable=False), 503)
+    if not settings.openrouter_api_key:
+        return _error_response(ResearchError(code="CONFIG_MISSING", message="OpenRouter is not configured.", retryable=False), 503)
     ip = request.client.host if request.client else "unknown"
     if not await _reserve_ip(ip):
         return _error_response(ResearchError(code="SERVER_BUSY", message="Research is already running or the request limit was reached.", retryable=True), 429)
