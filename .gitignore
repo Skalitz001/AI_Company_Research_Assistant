@@ -15,3 +15,5 @@ backend/app/static/*
 frontend/dist/
 .DS_Store
 *.pdf
+info.md
+architecture.md

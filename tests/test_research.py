@@ -621,3 +621,34 @@ async def test_complete_json_with_length_finish_reason_is_accepted():
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         adapter = OpenRouterClient(client, settings)
         assert await adapter._call("openai/gpt-oss-20b:free", "test prompt") == content
+
+
+@pytest.mark.asyncio
+async def test_invalid_model_json_gets_one_corrective_retry():
+    calls: list[dict] = []
+    report = {
+        "company": {"name": "Acme", "website": "https://acme.example"},
+        "summary": "Valid report.",
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        calls.append(payload)
+        content = "not json" if len(calls) == 1 else json.dumps(report)
+        return httpx.Response(
+            200,
+            json={"choices": [{"finish_reason": "stop", "message": {"content": content}}]},
+        )
+
+    settings = Settings(_env_file=None, openrouter_api_key="test-key")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        adapter = OpenRouterClient(client, settings)
+        result = await adapter.analyze(
+            "nvidia/nemotron-3-super-120b-a12b:free",
+            {"company_name": "Acme"},
+        )
+
+    assert result.summary == "Valid report."
+    assert len(calls) == 2
+    assert "reasoning" not in calls[0]
+    assert "Correct your previous schema/JSON mistakes." in calls[1]["messages"][1]["content"]

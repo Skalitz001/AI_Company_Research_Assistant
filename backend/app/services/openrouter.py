@@ -82,7 +82,6 @@ class OpenRouterClient:
         payload = {
             "model": model_id,
             "temperature": 0.1,
-            "reasoning": {"effort": "low"},
             "max_tokens": MAX_OUTPUT_TOKENS,
             "response_format": {"type": "json_object"},
             "messages": [
@@ -142,14 +141,18 @@ class OpenRouterClient:
             "\nUse only supplied evidence. Keep the summary under 600 characters; return at most 6 products_services, 3 pain_points, 3 competitors, and 6 sources; keep each list item under 120 characters. " +
             ("Correct your previous schema/JSON mistakes. " if corrective else "") + envelope
         )
-        raw = await self._call(model_id, instruction)
         try:
+            raw = await self._call(model_id, instruction)
             parsed = parse_json_response(raw)
             parsed["model_id"] = model_id
             return ResearchReport.model_validate(parsed)
-        except (OpenRouterError, ValidationError, TypeError, ValueError) as exc:
-            if isinstance(exc, OpenRouterError):
-                raise
+        except OpenRouterError as exc:
+            if not corrective and exc.code in {"MODEL_OUTPUT_INVALID", "MODEL_OUTPUT_TRUNCATED"}:
+                return await self.analyze(model_id, evidence, corrective=True)
+            raise
+        except (ValidationError, TypeError, ValueError) as exc:
+            if not corrective:
+                return await self.analyze(model_id, evidence, corrective=True)
             raise OpenRouterError("MODEL_OUTPUT_INVALID", "The model output did not match the report schema.") from exc
 
 
