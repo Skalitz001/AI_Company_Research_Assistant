@@ -1,118 +1,146 @@
 # Company Research Assistant
 
-A focused research MVP: enter a company name, bare domain, or HTTP(S) URL; the backend resolves and safely crawls the official site, enriches evidence with Serper, asks the selected OpenRouter model for a validated report, and renders a downloadable PDF. The React/Vite SPA and FastAPI API share one origin in production.
+An AI-assisted company research application for producing evidence-backed company reports from a company name, bare domain, or HTTP(S) URL. The application resolves the official website, gathers bounded public evidence, uses an OpenRouter model to generate a validated report, and provides an in-memory PDF download.
 
-This repository intentionally does **not** implement Discord. Discord is a post-core stretch feature and is not required for the MVP.
+The production stack is a React/Vite single-page application served by FastAPI from one Docker container. The API and frontend use the same origin in production.
+
+## Capabilities
+
+- Accepts company names, bare domains, and HTTP(S) URLs.
+- Resolves a credible official website for company-name input through Serper.
+- Crawls important static HTML pages with SSRF protections, deduplication, and strict size/time limits.
+- Enriches research with public search evidence when Serper is available.
+- Generates structured summaries, products or services, inferred pain points, competitors, sources, and warnings.
+- Supports selectable free OpenRouter models with bounded fallback behavior.
+- Streams truthful progress and heartbeat events over NDJSON.
+- Validates model output and report data with Pydantic before rendering.
+- Generates a downloadable ReportLab PDF from the validated report.
+- Provides a responsive ChatGPT-style research workspace.
+
+## Architecture
+
+```text
+React/Vite SPA
+        |
+        | same-origin HTTP and NDJSON
+        v
+FastAPI application
+  |-- configuration and health routes
+  |-- research streaming route
+  |-- SSRF-safe static HTML crawler
+  |-- Serper adapter
+  |-- OpenRouter adapter
+  |-- Pydantic report contracts
+  `-- ReportLab PDF renderer
+        |
+        +--> Serper API
+        +--> OpenRouter API
+```
+
+### Research pipeline
+
+1. Classify the input as a company name or website.
+2. For a company name, query Serper and select a credible official site. For a URL, validate and normalize the supplied site.
+3. Validate every outbound target and redirect before the request.
+4. Crawl the homepage and relevant same-host pages.
+5. Enrich the evidence with public search results and competitor discovery where configured.
+6. Ask the selected free OpenRouter model for schema-shaped JSON bounded by the collected evidence.
+7. Validate, normalize, and deduplicate the report.
+8. Stream the result to the browser and make the same validated report available for PDF generation.
+
+### Technology
+
+| Layer | Implementation |
+| --- | --- |
+| Frontend | React 19, Vite 6, JavaScript |
+| Backend | Python 3.12, FastAPI, Uvicorn |
+| Validation | Pydantic 2 |
+| HTTP client | HTTPX |
+| HTML extraction | BeautifulSoup 4, lxml |
+| PDF generation | ReportLab |
+| Deployment | Multi-stage Docker image, Render Web Service |
+
+## Project layout
+
+```text
+backend/
+  app/
+    main.py                 FastAPI application and SPA serving
+    config.py               Environment-backed settings
+    schemas.py              Shared API and report contracts
+    routers/                Health, configuration, research, and PDF routes
+    services/               Crawler, Serper, OpenRouter, research, and PDF logic
+    security/               URL inspection and SSRF safeguards
+frontend/
+  src/
+    App.jsx                 Application orchestration
+    api.js                  Browser API client
+    state.js                UI state model
+    components/             Composer, progress, report, and layout components
+tests/
+  test_api.py               HTTP contract and streaming behavior
+  test_research.py          Pipeline, evidence, timeout, and model behavior
+  test_crawler.py           Extraction, limits, and page scoring
+  test_pdf.py               PDF contract and filename behavior
+  test_urls.py              URL and SSRF validation
+Dockerfile                  Production image definition
+render.yaml                 Render service configuration
+```
 
 ## Requirements
 
-- Node.js 22 and npm (for the Vite frontend)
+- Node.js 22 and npm
 - Python 3.12
-- A Serper API key and an OpenRouter API key for research requests
-- Docker (optional, for the production-shaped local smoke check)
+- Serper API credentials for company-name research
+- OpenRouter API credentials for AI analysis
+- Docker for the production-shaped local check
 
-Provider credentials stay on the server. Do not put them in frontend source, browser storage, or a committed file.
+Provider credentials are server-side configuration. Do not place them in frontend source, browser storage, committed files, or Docker image layers.
 
-## Local setup
+## Local development
 
-1. Create a local environment file and fill in credentials outside version control:
-
-   ```sh
-   cp .env.example .env
-   # Edit .env; do not commit it.
-   ```
-
-   Required keys are `SERPER_API_KEY`, `OPENROUTER_API_KEY`, and `OPENROUTER_DEFAULT_MODEL`. A compatible model ID must contain `/`, for example `openrouter/auto`.
-
-2. Install backend dependencies in a virtual environment:
-
-   ```sh
-   python3.12 -m venv .venv
-   . .venv/bin/activate
-   python -m pip install --upgrade pip
-   python -m pip install -r backend/requirements.txt
-   ```
-
-3. Install frontend dependencies using the lockfile:
-
-   ```sh
-   cd frontend
-   npm ci
-   cd ..
-   ```
-
-4. Run the API and frontend in separate terminals:
-
-   ```sh
-   # Terminal 1
-   . .venv/bin/activate
-   uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 10000
-
-   # Terminal 2
-   cd frontend
-   npm run dev
-   ```
-
-   Open the local Vite address printed by `npm run dev`. The Vite development configuration proxies `/api` to the local FastAPI process. In production, FastAPI serves the compiled SPA itself, so no CORS configuration is needed.
-
-### Local API smoke checks
-
-With FastAPI running, health does not contact either provider and should work even when credentials are missing:
+### 1. Configure the environment
 
 ```sh
-curl -i http://127.0.0.1:10000/api/v1/health
-curl -i http://127.0.0.1:10000/api/v1/config
+cp .env.example .env
 ```
 
-A configured service can be exercised with a direct URL or company name. The response is newline-delimited JSON (NDJSON), so `-N` keeps progress visible:
+Set the provider credentials in `.env`. The default model is a free OpenRouter model; only free model IDs are enabled by the current deployment configuration.
+
+### 2. Install backend dependencies
 
 ```sh
-curl -N -X POST http://127.0.0.1:10000/api/v1/research \
-  -H 'Content-Type: application/json' \
-  -d '{"query":"https://example.com","model_id":"openrouter/auto"}'
+python3.12 -m venv .venv
+. .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r backend/requirements.txt
 ```
 
-Do not use a private, loopback, link-local, metadata, or otherwise unsafe URL as a test target. The crawler must reject it before making a network request. A missing provider key should produce an actionable configuration error rather than a provider call.
-
-### Production-shaped Docker check
-
-Build and run the same image shape used by Render:
+### 3. Install frontend dependencies
 
 ```sh
-docker build -t company-research-assistant .
-docker run --rm --env-file .env -e PORT=10000 -p 10000:10000 company-research-assistant
-curl -i http://127.0.0.1:10000/api/v1/health
+cd frontend
+npm ci
+cd ..
 ```
 
-The image builds the frontend with Node 22 Alpine, installs pinned Python dependencies and DejaVu fonts in Python 3.12 slim, copies `frontend/dist` into `backend/app/static`, and runs one Uvicorn worker as a non-root user. It binds `0.0.0.0` on `PORT` (default `10000`).
+### 4. Start the development servers
 
-## Focused checks
-
-Run the deterministic backend contract/crawler/provider/PDF tests and the frontend production build:
+Run FastAPI in one terminal:
 
 ```sh
-.venv/bin/python -m pytest -q
-cd frontend && npm run build
+. .venv/bin/activate
+uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 10000
 ```
 
-The tests use mocked HTTP; no provider credentials or external research calls are required.
+Run Vite in another terminal:
 
-## Environment variables
+```sh
+cd frontend
+npm run dev
+```
 
-`.env.example` lists every supported key with no secret values. The settings are:
-
-| Key | Required | Purpose / default |
-| --- | --- | --- |
-| `SERPER_API_KEY` | Yes for research | Server-side Serper credential. |
-| `OPENROUTER_API_KEY` | Yes for research | Server-side OpenRouter credential. |
-| `OPENROUTER_DEFAULT_MODEL` | Yes for research | Exact default OpenRouter model ID; the submitted ID is not silently replaced. |
-| `OPENROUTER_MODEL_SUGGESTIONS` | No | Comma-separated model IDs. Default: `openrouter/auto,openrouter/free,~openai/gpt-latest`. |
-| `OPENROUTER_APP_URL` | No | Optional app URL sent as provider metadata; there is no repository-defined public URL. |
-| `CRAWLER_USER_AGENT` | No | Crawler user agent. Default: `CompanyResearchAssistant/1.0 (+research crawler)`. |
-| `DISCORD_ENABLED` | No | Defaults to `false`; Discord is not part of this core MVP. |
-| `PORT` | No | Listening port. Defaults to `10000`; Render supplies its own port when deployed. |
-
-The browser receives only readiness and model suggestions. It never receives provider keys.
+The Vite development server proxies `/api` to FastAPI. In production, FastAPI serves the compiled frontend from the same origin.
 
 ## API
 
@@ -120,106 +148,140 @@ All JSON fields use `snake_case`.
 
 ### `GET /api/v1/health`
 
-Returns `200` and `{"status":"ok"}` without contacting Serper or OpenRouter. Render uses this path for its health check. Provider configuration does not make health fail.
+Returns `200` and `{"status":"ok"}` without contacting external providers. Render uses this route for health checks.
 
 ### `GET /api/v1/config`
 
-Returns browser-safe configuration:
+Returns browser-safe runtime configuration. No provider credential is returned.
 
 ```json
 {
   "ready": true,
-  "default_model": "openrouter/auto",
-  "model_suggestions": ["openrouter/auto", "openrouter/free", "~openai/gpt-latest"],
+  "default_model": "openai/gpt-oss-20b:free",
+  "model_suggestions": [
+    "openai/gpt-oss-20b:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "google/gemma-4-26b-a4b-it:free",
+    "openrouter/free"
+  ],
   "discord_enabled": false
 }
 ```
-
-`ready` is false if either required provider credential is absent. No secret is returned.
 
 ### `POST /api/v1/research`
 
 Request:
 
 ```json
-{"query":"Stripe","model_id":"openrouter/auto"}
+{
+  "query": "Stripe",
+  "model_id": "openai/gpt-oss-20b:free"
+}
 ```
 
-`query` is trimmed and accepts a company name (2–120 characters), a URL (up to 2,048 characters), or a valid bare domain. `model_id` is trimmed, must be 3–160 characters, must contain `/`, and may not contain whitespace or control characters. The exact selected model ID is sent to OpenRouter.
+The query accepts a company name up to 120 characters, a URL up to 2,048 characters, or a valid bare domain. The model ID must be an exact provider ID containing `/` and must be a free model (`openrouter/free` or an ID ending in `:free`).
 
-A valid request returns `200 application/x-ndjson` with `Cache-Control: no-store`. Every line is one complete JSON event. Typical progress stages are `resolving` (10%), `crawling` (30%), `searching` (55%), `analyzing` (75%), and `finalizing` (95%), followed by a `result` event. A `heartbeat` event is emitted every ten seconds while external work is pending. A terminal `error` event has this shape:
+Successful requests return `200 application/x-ndjson` with `Cache-Control: no-store`. Each line is a complete JSON event:
 
 ```json
-{"type":"error","error":{"code":"OPENROUTER_TIMEOUT","message":"The selected model did not respond in time.","retryable":true}}
+{"type":"progress","stage":"crawling","percent":30,"message":"Reading important website pages"}
+{"type":"heartbeat","message":"Still working…"}
+{"type":"result","report":{}}
 ```
 
-The complete pipeline is bounded by 75 seconds. Validation/configuration errors discovered before streaming use an HTTP error status with the same inner error shape. A disconnected browser cancels its pipeline.
-
-### Research report limits and fields
-
-The result contains `company`, `summary`, `products_services`, `pain_points`, `competitors`, `sources`, `warnings`, `generated_at`, and `model_id`. Company information includes name, website, and nullable phone/address/country/industry. Unknown phone and address values remain `null` and are displayed as “Not publicly found.” Pain points are explicitly AI-inferred hypotheses, not asserted company facts.
-
-Validation caps are:
-
-- Summary: 2,500 characters
-- Products/services: 12 entries
-- Pain points: 6 entries
-- Competitors: 5 entries
-- Sources: 15 entries
-- Every individual text field: an explicit maximum length
-
-A report is not returned when model output remains invalid. Competitors must have a verified public website; unresolved or unsafe candidates are omitted.
+Progress stages are `resolving`, `crawling`, `searching`, `analyzing`, and `finalizing`. The research deadline is 75 seconds. A disconnected browser cancels the active pipeline.
 
 ### `POST /api/v1/pdf`
 
-Accepts a complete structured report as `{"report":{...}}`. The backend revalidates it, rejects oversized input, and creates an in-memory ReportLab PDF—never arbitrary HTML or a filesystem-backed report. The response is `application/pdf` with a sanitized ASCII filename such as `<company>-research-report.pdf`. The PDF matches the validated report shown in the UI and includes the summary, products/services, AI-inference disclaimer, competitors, sources, and warnings.
+Accepts a complete structured report as `{"report":{...}}`. The backend revalidates the report and returns an in-memory `application/pdf` response with a sanitized filename. Arbitrary HTML is not accepted.
 
-## Provider and failure behavior
+The PDF includes the company information, summary, products or services, AI-inference disclaimer, competitors, sources, and warnings displayed in the report view.
 
-- Missing `SERPER_API_KEY` or `OPENROUTER_API_KEY`: research returns `503 CONFIG_MISSING`; `/health` remains available.
-- A company name that cannot resolve to a credible official site: `404 OFFICIAL_SITE_NOT_FOUND`; submit a URL instead.
-- Unsafe URL or unsafe redirect: `403 UNSAFE_URL`, before a network request.
-- Optional Serper enrichment failure for a direct URL: continue from crawl evidence and add a warning.
-- Insufficient evidence: `422 INSUFFICIENT_EVIDENCE`.
-- Invalid/incompatible model ID: clear non-retryable model error; no silent model fallback.
-- OpenRouter timeout or 429/5xx: retry once when the deadline allows, then return a retryable error.
-- Invalid model JSON after the allowed correction attempt: `MODEL_OUTPUT_INVALID`.
-- Overall deadline: `RESEARCH_TIMEOUT`.
-- PDF failure: the report remains available so PDF can be retried.
+## Environment variables
 
-## Exact research and cost limits
+`.env.example` lists every supported variable without secret values.
 
-The crawler is deliberately bounded for a public Render Free service:
+| Variable | Required | Description |
+| --- | --- | --- |
+| `SERPER_API_KEY` | Company names | Server-side Serper credential. Direct URL research can proceed without Serper. |
+| `OPENROUTER_API_KEY` | Research | Server-side OpenRouter credential. |
+| `OPENROUTER_DEFAULT_MODEL` | No | Free model ID used by default. Defaults to `openai/gpt-oss-20b:free`. |
+| `OPENROUTER_MODEL_SUGGESTIONS` | No | Comma-separated free model IDs. |
+| `OPENROUTER_APP_URL` | No | Optional application URL sent as OpenRouter metadata. |
+| `CRAWLER_USER_AGENT` | No | Crawler user agent. |
+| `DISCORD_ENABLED` | No | Reserved configuration flag; Discord delivery is not enabled in this release. |
+| `PORT` | No | Listening port. Defaults to `10000`; Render supplies its own port. |
 
-- HTTP(S) only, default ports 80/443, no embedded credentials, and no localhost/private/link-local/multicast/reserved/metadata addresses.
-- DNS is checked before every request and redirect; redirects are disabled in HTTPX and followed manually up to 3 times.
-- `robots.txt` is checked conservatively.
-- Homepage plus at most 5 same-host depth-one pages; up to 3 concurrent page requests.
-- Six-second page timeout and 15-second aggregate crawl budget.
-- HTML content types only; response body limit 1 MB, including responses without `Content-Length`.
-- At most 5,000 meaningful characters per page and 25,000 characters overall.
-- Tracking parameters, fragments, duplicate URLs/text, assets, and irrelevant account/legal/blog paths are excluded.
-- At most six Serper calls for name input and five for direct URL input; enrichment retains the knowledge graph and up to eight organic entries per search.
-- OpenRouter uses low temperature and at most 2,000 output tokens, with at most one corrective call if time permits.
-- Research has a 75-second overall deadline, a global concurrency limit of two jobs per instance, and a lightweight per-IP limit. Busy requests return `429 SERVER_BUSY` rather than queueing.
+## Security and reliability
 
-These limits reduce SSRF and quota risk; they do not make DNS rebinding impossible. A hardened future deployment would put crawling behind an egress proxy or network policy.
+- Only HTTP and HTTPS targets on default ports are accepted.
+- Embedded URL credentials, localhost, private/link-local, multicast, reserved, and cloud metadata addresses are rejected.
+- DNS is checked before each request and redirect; redirects are followed manually up to three times.
+- The crawler checks `robots.txt` conservatively and accepts HTML responses only.
+- Crawling is limited to six pages, six-second page timeouts, a 15-second aggregate budget, 1 MB response bodies, and 25,000 total extracted characters.
+- Search calls, concurrent jobs, and per-IP activity are bounded to control quota and resource usage.
+- Search snippets and crawled content are treated as untrusted evidence and are never rendered as HTML.
+- Model output is validated before it becomes a report.
+- Provider secrets are never returned to the browser, included in prompts shown to users, logged, or embedded in PDFs.
+- Research and PDF generation are in memory; no database, report history, or persistent report files are used.
 
-## Security boundaries
+## Verification
 
-- Provider credentials are server environment variables only and are never included in browser responses, prompts shown to users, logs, or PDFs.
-- Search snippets and crawled text are untrusted evidence. They are delimited for the model and are rendered as text, never as HTML or executable JavaScript.
-- The API validates model output and report input with Pydantic. The PDF route accepts structured report data only.
-- Production uses same-origin routes and restrictive security headers; production CORS is not enabled.
-- There is no authentication, authorization, database, report history, persistent report file, RAG, queue, WebSocket, Playwright/Selenium, or arbitrary HTML rendering in this MVP.
-- Render Free storage is ephemeral; all research and PDF work is in memory.
+Run the deterministic backend suite:
+
+```sh
+.venv/bin/python -m pytest -q
+```
+
+Build the frontend:
+
+```sh
+cd frontend
+npm run build
+```
+
+The tests use mocked HTTP responses and do not require provider credentials or external research calls.
+
+## Production-shaped Docker check
+
+Build the same multi-stage image used for deployment:
+
+```sh
+docker build -t company-research-assistant .
+```
+
+Run it with local environment variables:
+
+```sh
+docker run --rm \
+  --env-file .env \
+  -e PORT=10000 \
+  -p 10000:10000 \
+  company-research-assistant
+```
+
+Verify the health endpoint:
+
+```sh
+curl -i http://127.0.0.1:10000/api/v1/health
+```
+
+The runtime image uses Python 3.12, DejaVu fonts for PDF rendering, a non-root application user, and one Uvicorn worker. The frontend is compiled with Node 22 Alpine and copied into FastAPI's static directory.
 
 ## Render deployment
 
-`render.yaml` defines one free Docker web service and uses `/api/v1/health` for health checks. Set the three required provider/model environment variables in Render; optional settings may be left out to use defaults. Never paste credentials into source control or a Docker image layer.
+`render.yaml` defines a single free Docker web service with `/api/v1/health` as its health check.
 
-Render Free services spin down after about 15 minutes without inbound traffic and may take about a minute to wake. The first request after idle can therefore be slow; the UI surfaces a waking-service state rather than treating that delay as a generic research failure. Retry after the service is warm. No public URL is assumed or documented here—the deployment URL is supplied by the Render service after deployment.
+Configure these values in the Render environment settings:
 
-## Scope
+- `SERPER_API_KEY`
+- `OPENROUTER_API_KEY`
+- `OPENROUTER_DEFAULT_MODEL`
 
-The core MVP is one self-contained research turn with progress, a validated report, and PDF download. Discord integration is explicitly deferred and must not block core research, PDF generation, or deployment.
+Optional variables can remain unset to use application defaults. Never commit provider credentials or place them in a Docker build argument.
+
+Render Free services sleep after periods of inactivity and may take approximately one minute to wake. The first request after an idle period can therefore be slower than normal.
+
+## Current scope
+
+The current release is intentionally a focused, single-turn research workflow. It does not include authentication, authorization, persistent history, a database, a queue, WebSockets, browser automation for JavaScript-only sites, arbitrary HTML rendering, or Discord delivery. Static HTML plus public search evidence is the supported research input.
