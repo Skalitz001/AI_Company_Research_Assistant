@@ -55,6 +55,8 @@ async def test_direct_url_research_uses_async_safe_validation_and_exact_model(mo
     def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
         assert payload["model"] == "openrouter/free"
+        assert "BEGIN_UNTRUSTED_EVIDENCE" in payload["messages"][1]["content"]
+        assert "Acme provides workflow software" in payload["messages"][1]["content"]
         return httpx.Response(
             200,
             json={"choices": [{"message": {"content": json.dumps(model_report)}}]},
@@ -574,6 +576,8 @@ async def test_company_name_timeout_fallback_is_bounded(monkeypatch):
 @pytest.mark.asyncio
 async def test_length_finished_model_output_is_retryable_truncation():
     def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["max_tokens"] == 2000
         return httpx.Response(
             200,
             json={
@@ -594,3 +598,25 @@ async def test_length_finished_model_output_is_retryable_truncation():
 
     assert caught.value.code == "MODEL_OUTPUT_TRUNCATED"
     assert caught.value.retryable is True
+
+@pytest.mark.asyncio
+async def test_complete_json_with_length_finish_reason_is_accepted():
+    content = json.dumps({"summary": "complete"})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "finish_reason": "length",
+                        "message": {"content": content},
+                    }
+                ]
+            },
+        )
+
+    settings = Settings(openrouter_api_key="test-key")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        adapter = OpenRouterClient(client, settings)
+        assert await adapter._call("openai/gpt-oss-20b:free", "test prompt") == content

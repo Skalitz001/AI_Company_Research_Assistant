@@ -12,6 +12,7 @@ from ..config import Settings, is_free_model_id
 from ..schemas import ResearchReport
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+MAX_OUTPUT_TOKENS = 2000
 
 
 class OpenRouterError(RuntimeError):
@@ -82,7 +83,7 @@ class OpenRouterClient:
             "model": model_id,
             "temperature": 0.1,
             "reasoning": {"effort": "low"},
-            "max_tokens": 1600,
+            "max_tokens": MAX_OUTPUT_TOKENS,
             "response_format": {"type": "json_object"},
             "messages": [
                 {
@@ -111,13 +112,17 @@ class OpenRouterClient:
         try:
             body = response.json()
             choice = body["choices"][0]
+            content = choice["message"]["content"]
             if choice.get("finish_reason") == "length":
-                raise OpenRouterError(
-                    "MODEL_OUTPUT_TRUNCATED",
-                    "The selected model output was truncated before completing JSON.",
-                    retryable=True,
-                )
-            return choice["message"]["content"]
+                try:
+                    parse_json_response(content)
+                except OpenRouterError as exc:
+                    raise OpenRouterError(
+                        "MODEL_OUTPUT_TRUNCATED",
+                        "The selected model output was truncated before completing JSON.",
+                        retryable=True,
+                    ) from exc
+            return content
         except OpenRouterError:
             raise
         except (ValueError, KeyError, IndexError, TypeError) as exc:
@@ -134,7 +139,7 @@ class OpenRouterClient:
         }
         instruction = (
             "Return one JSON object with exactly these useful fields (no markdown): " + json.dumps(schema) +
-            "\nUse only supplied evidence. Keep the summary under 600 characters; return at most 8 products_services, 4 pain_points, 3 competitors, and 8 sources; keep each list item under 160 characters. " +
+            "\nUse only supplied evidence. Keep the summary under 600 characters; return at most 6 products_services, 3 pain_points, 3 competitors, and 6 sources; keep each list item under 120 characters. " +
             ("Correct your previous schema/JSON mistakes. " if corrective else "") + envelope
         )
         raw = await self._call(model_id, instruction)
