@@ -3,13 +3,13 @@ import json
 import httpx
 import pytest
 
-from backend.app.schemas import Competitor
+from backend.app.schemas import Competitor, ResearchReport
 from backend.app.config import Settings
 from backend.app.services import crawler
 from backend.app.security.url import UnsafeURLError
 from backend.app.services.serper import OfficialSite, SearchEvidence
 from backend.app.services import research as research_service
-from backend.app.services.openrouter import OpenRouterClient, OpenRouterError
+from backend.app.services.openrouter import OpenRouterClient, OpenRouterError, parse_json_response
 
 
 @pytest.mark.asyncio
@@ -424,3 +424,76 @@ async def test_openrouter_client_blocks_paid_model_before_request():
             await adapter._call("openai/gpt-5", "test prompt")
 
     assert caught.value.code == "MODEL_NOT_ALLOWED"
+
+
+def test_parse_json_response_extracts_report_object_from_model_preamble():
+    value = "I will provide the report now.\n{\"company\": {}, \"summary\": \"Valid\"}\nDone."
+
+    assert parse_json_response(value)["summary"] == "Valid"
+
+
+@pytest.mark.asyncio
+async def test_invalid_json_falls_back_to_another_free_model(monkeypatch):
+    async def bypass_dns(value: str) -> str:
+        return crawler.normalize_url(value)
+
+    async def fake_crawl(client, root_url, settings):
+        return crawler.CrawlResult(
+            root_url=root_url,
+            page_text="Acme builds workflow software.",
+            sources=[{"title": "Acme home", "url": root_url, "source_type": "website"}],
+        )
+
+    class FlakyAdapter:
+        calls: list[tuple[str, bool]] = []
+
+        def __init__(self, client, settings):
+            pass
+
+        async def analyze(self, model_id, evidence, *, corrective=False):
+            self.calls.append((model_id, corrective))
+            if len(self.calls) < 3:
+                raise OpenRouterError("MODEL_OUTPUT_INVALID", "invalid JSON")
+            return ResearchReport.model_validate(
+                {
+                    "company": {
+                        "name": "Acme",
+                        "website": "https://acme.example",
+                        "phone": None,
+                        "address": None,
+                        "country": None,
+                        "industry": "Software",
+                    },
+                    "summary": "Valid report.",
+                    "products_services": ["Workflow software"],
+                    "pain_points": [],
+                    "competitors": [],
+                    "sources": [],
+                    "warnings": [],
+                    "model_id": model_id,
+                }
+            )
+
+    monkeypatch.setattr(research_service, "validate_target_url", bypass_dns)
+    monkeypatch.setattr(research_service, "crawl_site", fake_crawl)
+    monkeypatch.setattr(research_service, "OpenRouterClient", FlakyAdapter)
+    settings = Settings(
+        openrouter_api_key="test-key",
+        serper_api_key=None,
+        openrouter_model_suggestions="openrouter/free,openai/gpt-oss-20b:free",
+    )
+
+    async with httpx.AsyncClient() as client:
+        report = await research_service.run_research(
+            "https://acme.example",
+            "openrouter/free",
+            client,
+            settings,
+        )
+
+    assert report.model_id == "openai/gpt-oss-20b:free"
+    assert FlakyAdapter.calls == [
+        ("openrouter/free", False),
+        ("openrouter/free", True),
+        ("openai/gpt-oss-20b:free", False),
+    ]

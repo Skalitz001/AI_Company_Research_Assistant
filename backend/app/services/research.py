@@ -307,29 +307,43 @@ async def run_research(
         "website_sources": website_sources,
         "search_results": search_evidence,
     }
-    async def analyze_with_retry() -> ResearchReport:
+    async def analyze_with_retry() -> tuple[ResearchReport, str]:
         adapter = OpenRouterClient(client, settings)
-        try:
-            return await adapter.analyze(model_id, evidence)
-        except OpenRouterError as first:
-            if first.code == "MODEL_OUTPUT_INVALID":
-                try:
-                    return await adapter.analyze(model_id, evidence, corrective=True)
-                except OpenRouterError as second:
-                    first = second
-            elif first.retryable:
-                try:
-                    return await adapter.analyze(model_id, evidence)
-                except OpenRouterError as second:
-                    first = second
-            raise ResearchServiceError(
-                first.code,
-                first.message,
-                retryable=first.retryable,
-                status_code=503 if first.retryable else 422,
-            ) from first
+        candidates = [model_id] + [
+            candidate for candidate in settings.model_suggestions if candidate != model_id
+        ]
+        last_error: OpenRouterError | None = None
+        for candidate in candidates[:2]:
+            try:
+                return await adapter.analyze(candidate, evidence), candidate
+            except OpenRouterError as first:
+                last_error = first
+                if first.code == "MODEL_OUTPUT_INVALID":
+                    try:
+                        return await adapter.analyze(candidate, evidence, corrective=True), candidate
+                    except OpenRouterError as second:
+                        last_error = second
+                elif first.retryable:
+                    try:
+                        return await adapter.analyze(candidate, evidence), candidate
+                    except OpenRouterError as second:
+                        last_error = second
+                if last_error.code not in {
+                    "MODEL_OUTPUT_INVALID",
+                    "MODEL_INVALID",
+                    "OPENROUTER_UNAVAILABLE",
+                    "OPENROUTER_TIMEOUT",
+                }:
+                    break
+        assert last_error is not None
+        raise ResearchServiceError(
+            last_error.code,
+            last_error.message,
+            retryable=last_error.retryable,
+            status_code=503 if last_error.retryable else 422,
+        ) from last_error
 
-    report = await analyze_with_retry()
+    report, used_model_id = await analyze_with_retry()
 
     company = report.company.model_copy(update={"name": company_name, "website": root_url})
     deterministic_sources = []
@@ -360,6 +374,6 @@ async def run_research(
         "sources": unique_sources[:15],
         "warnings": list(dict.fromkeys(warnings + report.warnings))[:10],
         "generated_at": datetime.now(timezone.utc),
-        "model_id": model_id,
+        "model_id": used_model_id,
     })
     return ResearchReport.model_validate(report)

@@ -29,17 +29,37 @@ def build_evidence_envelope(evidence: dict[str, Any]) -> str:
 def parse_json_response(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return value
-    text = str(value or "").strip()
+    if isinstance(value, list):
+        text = "".join(
+            item.get("text", "") if isinstance(item, dict) else str(item)
+            for item in value
+        ).strip()
+    else:
+        text = str(value or "").strip()
     match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.I | re.S)
     if match:
         text = match.group(1).strip()
     try:
         parsed = json.loads(text)
-    except (TypeError, ValueError) as exc:
-        raise OpenRouterError("MODEL_OUTPUT_INVALID", "The selected model returned invalid JSON.") from exc
-    if not isinstance(parsed, dict):
-        raise OpenRouterError("MODEL_OUTPUT_INVALID", "The selected model returned an invalid report.")
-    return parsed
+        if isinstance(parsed, dict):
+            return parsed
+    except (TypeError, ValueError):
+        pass
+    decoder = json.JSONDecoder()
+    candidates: list[dict[str, Any]] = []
+    for start in (match.start() for match in re.finditer(r"\{", text)):
+        try:
+            parsed, _ = decoder.raw_decode(text[start:])
+        except (TypeError, ValueError):
+            continue
+        if isinstance(parsed, dict):
+            candidates.append(parsed)
+    if not candidates:
+        raise OpenRouterError("MODEL_OUTPUT_INVALID", "The selected model returned invalid JSON.")
+    for candidate in candidates:
+        if "company" in candidate and "summary" in candidate:
+            return candidate
+    return candidates[0]
 
 
 class OpenRouterClient:

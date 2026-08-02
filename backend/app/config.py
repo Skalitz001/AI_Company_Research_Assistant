@@ -6,6 +6,7 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 FREE_MODEL_ROUTER = "openrouter/free"
+DEFAULT_FREE_MODEL = "openai/gpt-oss-20b:free"
 
 
 def is_free_model_id(model_id: str) -> bool:
@@ -25,9 +26,9 @@ class Settings(BaseSettings):
 
     serper_api_key: str | None = None
     openrouter_api_key: str | None = None
-    openrouter_default_model: str = FREE_MODEL_ROUTER
+    openrouter_default_model: str = DEFAULT_FREE_MODEL
     openrouter_model_suggestions: str = (
-        "openrouter/free,openai/gpt-oss-20b:free,"
+        "openai/gpt-oss-20b:free,openrouter/free,"
         "google/gemma-4-26b-a4b-it:free,"
         "nvidia/nemotron-3-super-120b-a12b:free"
     )
@@ -39,12 +40,13 @@ class Settings(BaseSettings):
 
     @property
     def effective_default_model(self) -> str:
-        return self.openrouter_default_model if is_free_model_id(self.openrouter_default_model) else FREE_MODEL_ROUTER
+        return self.openrouter_default_model if is_free_model_id(self.openrouter_default_model) else DEFAULT_FREE_MODEL
 
     @property
     def model_suggestions(self) -> list[str]:
         values = [item.strip() for item in self.openrouter_model_suggestions.split(",")]
-        return [item for item in values if item and is_free_model_id(item)]
+        suggestions = [item for item in values if item and is_free_model_id(item)]
+        return suggestions or [DEFAULT_FREE_MODEL]
 
     @property
     def providers_ready(self) -> bool:
