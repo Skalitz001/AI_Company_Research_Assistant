@@ -452,7 +452,7 @@ async def test_invalid_json_falls_back_to_another_free_model(monkeypatch):
 
         async def analyze(self, model_id, evidence, *, corrective=False):
             self.calls.append((model_id, corrective))
-            if len(self.calls) < 3:
+            if len(self.calls) < 2:
                 raise OpenRouterError("MODEL_OUTPUT_INVALID", "invalid JSON")
             return ResearchReport.model_validate(
                 {
@@ -498,6 +498,99 @@ async def test_invalid_json_falls_back_to_another_free_model(monkeypatch):
     assert report.model_id == "nvidia/nemotron-3-super-120b-a12b:free"
     assert FlakyAdapter.calls == [
         ("openai/gpt-oss-20b:free", False),
-        ("openai/gpt-oss-20b:free", True),
         ("nvidia/nemotron-3-super-120b-a12b:free", False),
     ]
+
+
+@pytest.mark.asyncio
+async def test_company_name_timeout_fallback_is_bounded(monkeypatch):
+    async def bypass_dns(value: str) -> str:
+        return crawler.normalize_url(value)
+
+    async def fake_resolve(self, company: str) -> OfficialSite:
+        evidence = SearchEvidence(
+            query=f"{company} official website",
+            knowledge_graph={"title": company, "website": "https://acme.example"},
+            organic=[],
+        )
+        return OfficialSite(company, "https://acme.example", 0.95, evidence)
+
+    async def fake_search(self, query: str, *, num: int = 10) -> SearchEvidence:
+        return SearchEvidence(
+            query=query,
+            knowledge_graph={"title": "Acme", "website": "https://acme.example"},
+            organic=[],
+        )
+
+    async def fake_crawl(client, root_url, settings):
+        return crawler.CrawlResult(
+            root_url=root_url,
+            company_facts={"industry": "Software"},
+            page_text="Acme builds workflow software.",
+            sources=[{"title": "Acme home", "url": root_url, "source_type": "website"}],
+        )
+
+    class TimeoutAdapter:
+        calls: list[tuple[str, bool]] = []
+
+        def __init__(self, client, settings):
+            pass
+
+        async def analyze(self, model_id, evidence, *, corrective=False):
+            self.calls.append((model_id, corrective))
+            raise OpenRouterError("OPENROUTER_TIMEOUT", "timed out", retryable=True)
+
+    monkeypatch.setattr(research_service, "validate_target_url", bypass_dns)
+    monkeypatch.setattr(research_service, "crawl_site", fake_crawl)
+    monkeypatch.setattr(research_service.SerperClient, "resolve_official_site", fake_resolve)
+    monkeypatch.setattr(research_service.SerperClient, "search", fake_search)
+    monkeypatch.setattr(research_service, "OpenRouterClient", TimeoutAdapter)
+    settings = Settings(
+        openrouter_api_key="test-key",
+        serper_api_key="serper-test",
+        openrouter_model_suggestions=(
+            "openai/gpt-oss-20b:free,"
+            "nvidia/nemotron-3-super-120b-a12b:free,"
+            "openrouter/free"
+        ),
+    )
+
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(research_service.ResearchServiceError) as caught:
+            await research_service.run_research(
+                "Acme",
+                "openai/gpt-oss-20b:free",
+                client,
+                settings,
+            )
+
+    assert caught.value.code == "OPENROUTER_TIMEOUT"
+    assert TimeoutAdapter.calls == [
+        ("openai/gpt-oss-20b:free", False),
+        ("nvidia/nemotron-3-super-120b-a12b:free", False),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_length_finished_model_output_is_retryable_truncation():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "finish_reason": "length",
+                        "message": {"content": None},
+                    }
+                ]
+            },
+        )
+
+    settings = Settings(openrouter_api_key="test-key")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        adapter = OpenRouterClient(client, settings)
+        with pytest.raises(OpenRouterError) as caught:
+            await adapter._call("openai/gpt-oss-20b:free", "test prompt")
+
+    assert caught.value.code == "MODEL_OUTPUT_TRUNCATED"
+    assert caught.value.retryable is True

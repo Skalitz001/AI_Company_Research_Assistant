@@ -307,33 +307,25 @@ async def run_research(
         "website_sources": website_sources,
         "search_results": search_evidence,
     }
-    async def analyze_with_retry() -> tuple[ResearchReport, str]:
+    async def analyze_with_fallback() -> tuple[ResearchReport, str]:
         adapter = OpenRouterClient(client, settings)
         candidates = [model_id] + [
             candidate for candidate in settings.model_suggestions if candidate != model_id
         ]
         last_error: OpenRouterError | None = None
+        retryable_codes = {
+            "MODEL_OUTPUT_INVALID",
+            "MODEL_OUTPUT_TRUNCATED",
+            "MODEL_INVALID",
+            "OPENROUTER_UNAVAILABLE",
+            "OPENROUTER_TIMEOUT",
+        }
         for candidate in candidates[:2]:
             try:
                 return await adapter.analyze(candidate, evidence), candidate
-            except OpenRouterError as first:
-                last_error = first
-                if first.code == "MODEL_OUTPUT_INVALID":
-                    try:
-                        return await adapter.analyze(candidate, evidence, corrective=True), candidate
-                    except OpenRouterError as second:
-                        last_error = second
-                elif first.retryable:
-                    try:
-                        return await adapter.analyze(candidate, evidence), candidate
-                    except OpenRouterError as second:
-                        last_error = second
-                if last_error.code not in {
-                    "MODEL_OUTPUT_INVALID",
-                    "MODEL_INVALID",
-                    "OPENROUTER_UNAVAILABLE",
-                    "OPENROUTER_TIMEOUT",
-                }:
+            except OpenRouterError as error:
+                last_error = error
+                if error.code not in retryable_codes:
                     break
         assert last_error is not None
         raise ResearchServiceError(
@@ -343,7 +335,7 @@ async def run_research(
             status_code=503 if last_error.retryable else 422,
         ) from last_error
 
-    report, used_model_id = await analyze_with_retry()
+    report, used_model_id = await analyze_with_fallback()
 
     company = report.company.model_copy(update={"name": company_name, "website": root_url})
     deterministic_sources = []
