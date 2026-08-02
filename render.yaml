@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: company-research-assistant
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/v1/health
+    envVars:
+      # Required provider credentials. Enter these in Render's environment UI.
+      - key: SERPER_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_DEFAULT_MODEL
+        sync: false
+      # Optional settings. The application supplies defaults when omitted.
+      - key: OPENROUTER_MODEL_SUGGESTIONS
+        value: openrouter/auto,openrouter/free,~openai/gpt-latest
+      - key: OPENROUTER_APP_URL
+        sync: false
+      - key: CRAWLER_USER_AGENT
+        value: CompanyResearchAssistant/1.0 (+research crawler)
+      - key: DISCORD_ENABLED
+        value: "false"
