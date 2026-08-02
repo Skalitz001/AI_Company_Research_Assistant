@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from .config import get_settings
 from .routers.config import router as config_router
 from .routers.pdf import router as pdf_router
+from .routers.discord import router as discord_router
 from .routers.research import router as research_router
 from .schemas import ResearchError
 
@@ -27,6 +28,7 @@ app = FastAPI(title="Company Research Assistant", lifespan=lifespan)
 app.include_router(config_router)
 app.include_router(research_router)
 app.include_router(pdf_router)
+app.include_router(discord_router)
 
 
 @app.exception_handler(RequestValidationError)

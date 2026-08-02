@@ -575,6 +575,43 @@ async def test_company_name_timeout_fallback_is_bounded(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_openrouter_rate_limit_reports_reset_time():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            429,
+            headers={
+                "x-ratelimit-remaining": "0",
+                "x-ratelimit-reset": "1785715200000",
+            },
+        )
+
+    settings = Settings(_env_file=None, openrouter_api_key="test-key")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        adapter = OpenRouterClient(client, settings)
+        with pytest.raises(OpenRouterError) as caught:
+            await adapter._call("openai/gpt-oss-20b:free", "test prompt")
+
+    assert caught.value.code == "OPENROUTER_RATE_LIMITED"
+    assert caught.value.retryable is True
+    assert "2026-08-03 00:00 UTC" in caught.value.message
+    assert "this OpenRouter account" in caught.value.message
+
+
+@pytest.mark.asyncio
+async def test_openrouter_server_error_remains_unavailable():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503)
+
+    settings = Settings(_env_file=None, openrouter_api_key="test-key")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        adapter = OpenRouterClient(client, settings)
+        with pytest.raises(OpenRouterError) as caught:
+            await adapter._call("openai/gpt-oss-20b:free", "test prompt")
+
+    assert caught.value.code == "OPENROUTER_UNAVAILABLE"
+    assert caught.value.retryable is True
+
+@pytest.mark.asyncio
 async def test_length_finished_model_output_is_retryable_truncation():
     def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)

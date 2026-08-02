@@ -13,6 +13,11 @@ export default function ChatThread({
   onRetry,
   onNewResearch,
   onPdf,
+  discordEnabled,
+  discordConfigured,
+  discordStatus,
+  discordError,
+  onDiscord,
 }) {
   /* ── Booting ── */
   if (phase === "booting") {
@@ -94,6 +99,11 @@ export default function ChatThread({
           pdfError={pdfError}
           onPdf={onPdf}
           onNewResearch={onNewResearch}
+          discordEnabled={discordEnabled}
+          discordConfigured={discordConfigured}
+          discordStatus={discordStatus}
+          discordError={discordError}
+          onDiscord={onDiscord}
         />
       </div>
     );

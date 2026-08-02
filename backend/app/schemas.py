@@ -1,6 +1,8 @@
 """Pydantic contracts shared by the API, services, and frontend."""
 
 from datetime import datetime, timezone
+import re
+
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -110,6 +112,47 @@ class ResearchReport(BaseModel):
                 unique.append(competitor)
         self.competitors = unique[:5]
         return self
+
+
+class DiscordApplicant(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    email: str = Field(min_length=3, max_length=254)
+
+    @field_validator("name", "email", mode="before")
+    @classmethod
+    def trim_text(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value):
+            raise ValueError("A valid applicant email is required")
+        return value
+
+
+class DiscordRequest(BaseModel):
+    report: ResearchReport
+    applicant: DiscordApplicant
+    bot_token: str = Field(min_length=1, max_length=256)
+    channel_id: str = Field(min_length=1, max_length=32)
+
+    @field_validator("bot_token", "channel_id", mode="before")
+    @classmethod
+    def trim_credentials(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("channel_id")
+    @classmethod
+    def validate_channel_id(cls, value: str) -> str:
+        if not re.fullmatch(r"[0-9]+", value):
+            raise ValueError("Discord channel ID must be numeric")
+        return value
+
+
+class DiscordResponse(BaseModel):
+    status: Literal["sent"] = "sent"
+    message: str = "Report sent to Discord."
 
 
 class ConfigResponse(BaseModel):

@@ -112,6 +112,39 @@ export async function fetchPdf(report) {
 }
 
 /**
+ * POST /api/v1/discord — generates and sends a report PDF to Discord.
+ * Credentials are supplied for this request only; callers keep them session-only.
+ */
+export async function sendToDiscord(report, settings) {
+  const res = await fetch(`${BASE}/discord`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      report,
+      applicant: {
+        name: settings.applicant_name,
+        email: settings.applicant_email,
+      },
+      bot_token: settings.bot_token,
+      channel_id: settings.channel_id,
+    }),
+  });
+  let payload = null;
+  try {
+    payload = await res.json();
+  } catch {
+    /* use the status fallback below */
+  }
+  if (!res.ok) {
+    const error = new Error(payload?.error?.message || `Discord delivery failed (${res.status})`);
+    error.code = payload?.error?.code || "DISCORD_DELIVERY_FAILED";
+    error.retryable = Boolean(payload?.error?.retryable);
+    throw error;
+  }
+  return payload;
+}
+
+/**
  * Trigger a browser download from a Blob.
  */
 export function downloadBlob(blob, filename) {

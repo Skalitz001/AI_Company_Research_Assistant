@@ -22,4 +22,4 @@ services:
       - key: CRAWLER_USER_AGENT
         value: CompanyResearchAssistant/1.0 (+research crawler)
       - key: DISCORD_ENABLED
-        value: "false"
+        value: "true"

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import httpx
@@ -13,6 +15,46 @@ from ..schemas import ResearchReport
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 MAX_OUTPUT_TOKENS = 2000
+
+
+def _rate_limit_reset(response: httpx.Response) -> str | None:
+    """Return a provider reset time in a stable, user-readable UTC format."""
+    reset_value = response.headers.get("x-ratelimit-reset")
+    if reset_value:
+        try:
+            timestamp = float(reset_value)
+            if timestamp > 100_000_000_000:
+                timestamp /= 1000
+            if timestamp <= 0:
+                raise ValueError("reset timestamp is not positive")
+            return datetime.fromtimestamp(timestamp, timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        except (OSError, OverflowError, TypeError, ValueError):
+            pass
+
+    retry_after = response.headers.get("retry-after")
+    if not retry_after:
+        return None
+    try:
+        reset_at = datetime.now(timezone.utc) + timedelta(seconds=max(0, float(retry_after)))
+    except (TypeError, ValueError):
+        try:
+            reset_at = parsedate_to_datetime(retry_after).astimezone(timezone.utc)
+        except (TypeError, ValueError, OverflowError):
+            return None
+    return reset_at.strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _rate_limit_message(response: httpx.Response) -> str:
+    reset_at = _rate_limit_reset(response)
+    if reset_at:
+        return (
+            f"OpenRouter rate limit reached. Free-model quota resets at {reset_at}. "
+            "Add credits to this OpenRouter account to continue sooner."
+        )
+    return (
+        "OpenRouter rate limit reached. Add credits to this OpenRouter account "
+        "or retry after the provider limit resets."
+    )
 
 
 class OpenRouterError(RuntimeError):
@@ -102,7 +144,9 @@ class OpenRouterClient:
             response = await self.client.post(OPENROUTER_URL, headers=headers, json=payload, timeout=30.0)
         except (httpx.TimeoutException, httpx.NetworkError) as exc:
             raise OpenRouterError("OPENROUTER_TIMEOUT", "The selected model did not respond in time.", retryable=True) from exc
-        if response.status_code == 429 or response.status_code >= 500:
+        if response.status_code == 429:
+            raise OpenRouterError("OPENROUTER_RATE_LIMITED", _rate_limit_message(response), retryable=True)
+        if response.status_code >= 500:
             raise OpenRouterError("OPENROUTER_UNAVAILABLE", "The model provider is temporarily unavailable.", retryable=True)
         if response.status_code in (400, 404):
             raise OpenRouterError("MODEL_INVALID", "The selected model ID was rejected by OpenRouter.")

@@ -866,6 +866,70 @@ ul, ol { list-style-position: inside; }
 }
 .pdf-error svg { flex-shrink: 0; }
 
+/* ── Discord settings and delivery ── */
+.discord-settings {
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+  background: var(--c-surface-2);
+}
+.discord-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+  padding: var(--s-3);
+  cursor: pointer;
+  list-style: none;
+}
+.discord-summary::-webkit-details-marker { display: none; }
+.discord-summary > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.discord-summary strong {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+.discord-summary small {
+  font-size: var(--fs-xs);
+  color: var(--c-text-3);
+}
+.discord-summary svg {
+  color: var(--c-text-2);
+  transition: transform var(--dur) var(--ease);
+}
+.discord-settings[open] .discord-summary svg { transform: rotate(180deg); }
+.discord-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: 0 var(--s-3) var(--s-3);
+}
+.discord-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+.discord-field > span {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--c-text-2);
+}
+.discord-field .input {
+  font-size: var(--fs-sm);
+  padding: 8px var(--s-2);
+}
+.discord-error {
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-sm);
+  background: var(--c-danger-bg);
+  color: var(--c-danger);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-base);
+}
+.report-discord-error { font-size: var(--fs-sm); }
+
 
 /* ══════════════════════════════
    Composer bar

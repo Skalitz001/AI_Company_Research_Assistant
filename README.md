@@ -172,7 +172,7 @@ Returns browser-safe runtime configuration. No provider credential is returned.
     "google/gemma-4-26b-a4b-it:free",
     "openrouter/free"
   ],
-  "discord_enabled": false
+  "discord_enabled": true
 }
 ```
 
@@ -198,12 +198,31 @@ Successful requests return `200 application/x-ndjson` with `Cache-Control: no-st
 ```
 
 Progress stages are `resolving`, `crawling`, `searching`, `analyzing`, and `finalizing`. The research deadline is 75 seconds. A disconnected browser cancels the active pipeline.
+If the OpenRouter account exhausts its free-model quota, the research error uses `OPENROUTER_RATE_LIMITED` and includes the provider reset time when available. Add credits to that OpenRouter account or retry after the displayed UTC time; swapping keys on the same account does not change the account-wide free limit.
 
 ### `POST /api/v1/pdf`
 
 Accepts a complete structured report as `{"report":{...}}`. The backend revalidates the report and returns an in-memory `application/pdf` response with a sanitized filename. Arbitrary HTML is not accepted.
 
 The PDF includes the company information, summary, products or services, AI-inference disclaimer, competitors, sources, and warnings displayed in the report view.
+
+### `POST /api/v1/discord`
+
+When `DISCORD_ENABLED=true`, the browser can deliver a completed report to a Discord channel:
+
+```json
+{
+  "report": {},
+  "applicant": {
+    "name": "Applicant Name",
+    "email": "applicant@example.com"
+  },
+  "bot_token": "provided by the applicant",
+  "channel_id": "123456789012345678"
+}
+```
+
+The backend validates the report and numeric channel ID, generates the PDF in memory, and sends a Discord API v10 multipart request with `payload_json`, `files[0]`, and `allowed_mentions.parse=[]`. Bot tokens are accepted only for the request, never returned, logged, persisted, or embedded in the PDF. The UI keeps Discord settings in `sessionStorage` and provides a retry action after delivery failures.
 
 ## Environment variables
 
@@ -217,7 +236,7 @@ The PDF includes the company information, summary, products or services, AI-infe
 | `OPENROUTER_MODEL_SUGGESTIONS` | No | Comma-separated free model IDs. |
 | `OPENROUTER_APP_URL` | No | Optional application URL sent as OpenRouter metadata. |
 | `CRAWLER_USER_AGENT` | No | Crawler user agent. |
-| `DISCORD_ENABLED` | No | Reserved configuration flag; Discord delivery is not enabled in this release. |
+| `DISCORD_ENABLED` | No | Enables the session-only Discord PDF delivery panel and endpoint. The Render blueprint enables it; local development defaults to `false`. |
 | `PORT` | No | Listening port. Defaults to `10000`; Render supplies its own port. |
 
 ## Security and reliability
@@ -231,6 +250,7 @@ The PDF includes the company information, summary, products or services, AI-infe
 - Search snippets and crawled content are treated as untrusted evidence and are never rendered as HTML.
 - Model output is validated before it becomes a report.
 - Provider secrets are never returned to the browser, included in prompts shown to users, logged, or embedded in PDFs.
+- Discord bot tokens are supplied by the applicant in the HTTPS request, held in browser session storage only, and never persisted or returned by the API.
 - Research and PDF generation are in memory; no database, report history, or persistent report files are used.
 
 ## Verification
@@ -292,4 +312,4 @@ Render Free services sleep after periods of inactivity and may take approximatel
 
 ## Current scope
 
-The current release is intentionally a focused, single-turn research workflow. It does not include authentication, authorization, persistent history, a database, a queue, WebSockets, browser automation for JavaScript-only sites, arbitrary HTML rendering, or Discord delivery. Static HTML plus public search evidence is the supported research input.
+The current release is intentionally a focused, single-turn research workflow. It does not include authentication, authorization, persistent history, a database, a queue, WebSockets, or browser automation for JavaScript-only sites. Static HTML plus public search evidence and optional session-only Discord PDF delivery are supported.

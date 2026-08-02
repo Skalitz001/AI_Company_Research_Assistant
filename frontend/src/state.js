@@ -6,6 +6,32 @@
  *              └─────────┘←───────────────┘
  */
 
+const EMPTY_DISCORD_SETTINGS = {
+  applicant_name: "",
+  applicant_email: "",
+  bot_token: "",
+  channel_id: "",
+};
+
+function loadDiscordSettings() {
+  if (typeof sessionStorage === "undefined") return { ...EMPTY_DISCORD_SETTINGS };
+  try {
+    const saved = JSON.parse(sessionStorage.getItem("cra-discord-settings") || "{}");
+    return { ...EMPTY_DISCORD_SETTINGS, ...saved };
+  } catch {
+    return { ...EMPTY_DISCORD_SETTINGS };
+  }
+}
+
+export function hasDiscordSettings(settings) {
+  return Boolean(
+    settings?.applicant_name?.trim()
+    && settings?.applicant_email?.trim()
+    && settings?.bot_token?.trim()
+    && settings?.channel_id?.trim(),
+  );
+}
+
 /** @type {import('./state').AppState} */
 export const initialState = {
   /* lifecycle */
@@ -31,6 +57,11 @@ export const initialState = {
   /* pdf */
   pdfStatus: "idle",      // idle | loading | done | error
   pdfError: null,
+
+  /* Discord — token exists only in this tab's session state */
+  discordSettings: loadDiscordSettings(),
+  discordStatus: "idle",  // idle | sending | sent | error
+  discordError: null,
 
   /* ui */
   sidebarOpen: false,
@@ -64,6 +95,15 @@ export function reducer(state, action) {
 
     case "SET_DRAFT_MODEL":
       return { ...state, draftModel: action.value };
+    case "SET_DISCORD_SETTING":
+      if (!Object.prototype.hasOwnProperty.call(EMPTY_DISCORD_SETTINGS, action.field)) return state;
+      return {
+        ...state,
+        discordSettings: { ...state.discordSettings, [action.field]: action.value },
+        discordStatus: "idle",
+        discordError: null,
+      };
+
 
     /* ── Research ── */
     case "SUBMIT": {
@@ -83,6 +123,8 @@ export function reducer(state, action) {
         researchError: null,
         pdfStatus: "idle",
         pdfError: null,
+        discordStatus: "idle",
+        discordError: null,
       };
     }
 
@@ -129,6 +171,7 @@ export function reducer(state, action) {
         phase: "idle",
         config: state.config,
         draftModel: state.config?.default_model || "",
+        discordSettings: state.discordSettings,
       };
 
     case "RETRY":
@@ -138,6 +181,16 @@ export function reducer(state, action) {
         draftQuery: state.submittedQuery,
         draftModel: state.submittedModel,
       };
+    /* ── Discord ── */
+    case "DISCORD_SEND_START":
+      return { ...state, discordStatus: "sending", discordError: null };
+
+    case "DISCORD_SEND_SUCCESS":
+      return { ...state, discordStatus: "sent", discordError: null };
+
+    case "DISCORD_SEND_ERROR":
+      return { ...state, discordStatus: "error", discordError: action.message };
+
 
     /* ── PDF ── */
     case "PDF_LOADING":

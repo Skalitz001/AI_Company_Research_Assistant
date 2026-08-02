@@ -1,4 +1,15 @@
-export default function ReportView({ report, pdfStatus, pdfError, onPdf, onNewResearch }) {
+export default function ReportView({
+  report,
+  pdfStatus,
+  pdfError,
+  onPdf,
+  onNewResearch,
+  discordEnabled,
+  discordConfigured,
+  discordStatus,
+  discordError,
+  onDiscord,
+}) {
   const { company, summary, products_services, pain_points, competitors, sources, warnings, generated_at, model_id } = report;
 
   const generatedDate = generated_at
@@ -155,6 +166,25 @@ export default function ReportView({ report, pdfStatus, pdfError, onPdf, onNewRe
             </>
           )}
         </button>
+        {discordEnabled && (
+          <button
+            className="btn btn-secondary"
+            onClick={onDiscord}
+            disabled={!discordConfigured || discordStatus === "sending"}
+            title={discordConfigured ? "Send the report PDF to Discord" : "Configure Discord in the settings panel"}
+          >
+            {discordStatus === "sending" ? (
+              <><span className="spinner" aria-hidden="true" /> Sending to Discord…</>
+            ) : discordStatus === "sent" ? (
+              <>Sent to Discord</>
+            ) : (
+              <>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+                {discordStatus === "error" ? "Retry Send" : "Send to Discord"}
+              </>
+            )}
+          </button>
+        )}
         <button className="btn btn-secondary" onClick={onNewResearch}>
           New Research
         </button>
@@ -164,6 +194,11 @@ export default function ReportView({ report, pdfStatus, pdfError, onPdf, onNewRe
         <p className="pdf-error" role="alert">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>
           PDF failed: {pdfError}
+        </p>
+      )}
+      {discordError && (
+        <p className="discord-error report-discord-error" role="alert">
+          Discord failed: {discordError}
         </p>
       )}
     </article>

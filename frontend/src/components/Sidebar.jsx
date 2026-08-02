@@ -1,4 +1,5 @@
 import ModelInput from "./ModelInput";
+import DiscordSettings from "./DiscordSettings";
 
 export default function Sidebar({
   config,
@@ -8,6 +9,11 @@ export default function Sidebar({
   onModelChange,
   onCancel,
   onNewResearch,
+  discordEnabled,
+  discordSettings,
+  discordStatus,
+  discordError,
+  onDiscordSettingChange,
 }) {
   const isResearching = phase === "researching";
   const showResult = phase === "complete" || phase === "error";
@@ -66,6 +72,13 @@ export default function Sidebar({
           <p className="status-badge status-loading">Connecting…</p>
         )}
       </div>
+      <DiscordSettings
+        enabled={discordEnabled}
+        settings={discordSettings}
+        status={discordStatus}
+        error={discordError}
+        onChange={onDiscordSettingChange}
+      />
 
       <div className="sidebar-section sidebar-help">
         <div className="sidebar-label">How it works</div>
