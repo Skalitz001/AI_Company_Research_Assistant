@@ -13,10 +13,10 @@ services:
       - key: OPENROUTER_API_KEY
         sync: false
       - key: OPENROUTER_DEFAULT_MODEL
-        sync: false
+        value: "nvidia/nemotron-3-super-120b-a12b:free"
       # Optional settings. The application supplies defaults when omitted.
       - key: OPENROUTER_MODEL_SUGGESTIONS
-        value: "openai/gpt-oss-20b:free,nvidia/nemotron-3-super-120b-a12b:free,google/gemma-4-26b-a4b-it:free,openrouter/free"
+        value: "nvidia/nemotron-3-super-120b-a12b:free,openai/gpt-oss-20b:free,google/gemma-4-26b-a4b-it:free,openrouter/free"
       - key: OPENROUTER_APP_URL
         sync: false
       - key: CRAWLER_USER_AGENT

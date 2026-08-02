@@ -165,10 +165,10 @@ Returns browser-safe runtime configuration. No provider credential is returned.
 ```json
 {
   "ready": true,
-  "default_model": "openai/gpt-oss-20b:free",
+  "default_model": "nvidia/nemotron-3-super-120b-a12b:free",
   "model_suggestions": [
-    "openai/gpt-oss-20b:free",
     "nvidia/nemotron-3-super-120b-a12b:free",
+    "openai/gpt-oss-20b:free",
     "google/gemma-4-26b-a4b-it:free",
     "openrouter/free"
   ],
@@ -183,7 +183,7 @@ Request:
 ```json
 {
   "query": "Stripe",
-  "model_id": "openai/gpt-oss-20b:free"
+  "model_id": "nvidia/nemotron-3-super-120b-a12b:free"
 }
 ```
 
@@ -213,7 +213,7 @@ The PDF includes the company information, summary, products or services, AI-infe
 | --- | --- | --- |
 | `SERPER_API_KEY` | Company names | Server-side Serper credential. Direct URL research can proceed without Serper. |
 | `OPENROUTER_API_KEY` | Research | Server-side OpenRouter credential. |
-| `OPENROUTER_DEFAULT_MODEL` | No | Free model ID used by default. Defaults to `openai/gpt-oss-20b:free`. |
+| `OPENROUTER_DEFAULT_MODEL` | No | Free model ID used by default. Defaults to `nvidia/nemotron-3-super-120b-a12b:free`. |
 | `OPENROUTER_MODEL_SUGGESTIONS` | No | Comma-separated free model IDs. |
 | `OPENROUTER_APP_URL` | No | Optional application URL sent as OpenRouter metadata. |
 | `CRAWLER_USER_AGENT` | No | Crawler user agent. |

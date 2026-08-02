@@ -480,6 +480,7 @@ async def test_invalid_json_falls_back_to_another_free_model(monkeypatch):
     monkeypatch.setattr(research_service, "crawl_site", fake_crawl)
     monkeypatch.setattr(research_service, "OpenRouterClient", FlakyAdapter)
     settings = Settings(
+        _env_file=None,
         openrouter_api_key="test-key",
         serper_api_key=None,
     )
@@ -492,10 +493,10 @@ async def test_invalid_json_falls_back_to_another_free_model(monkeypatch):
             settings,
         )
 
-    assert settings.effective_default_model == "openai/gpt-oss-20b:free"
+    assert settings.effective_default_model == "nvidia/nemotron-3-super-120b-a12b:free"
     assert settings.model_suggestions[:2] == [
-        "openai/gpt-oss-20b:free",
         "nvidia/nemotron-3-super-120b-a12b:free",
+        "openai/gpt-oss-20b:free",
     ]
     assert report.model_id == "nvidia/nemotron-3-super-120b-a12b:free"
     assert FlakyAdapter.calls == [
