@@ -57,6 +57,25 @@ def _evidence_search(item: SearchEvidence) -> list[dict[str, str]]:
     return values
 
 
+def _has_meaningful_company_evidence(
+    evidence: list[dict[str, Any]],
+    facts: dict[str, Any],
+) -> bool:
+    if any(
+        key != "title" and value is not None and str(value).strip()
+        for key, value in facts.items()
+    ):
+        return True
+    return any(
+        isinstance(group, dict)
+        and any(
+            isinstance(result, dict) and str(result.get("snippet", "")).strip()
+            for result in group.get("results", [])
+        )
+        for group in evidence
+    )
+
+
 def _crawler_parts(result: Any) -> tuple[dict[str, Any], str, list[dict[str, Any]], list[str]]:
     facts = getattr(result, "company_facts", None) or getattr(result, "facts", None) or {}
     text = getattr(result, "page_text", None) or getattr(result, "text", None) or getattr(result, "extracted_text", None) or ""
@@ -145,6 +164,7 @@ async def run_research(
     company_name = query
     serper = SerperClient(client, settings)
     search_evidence: list[dict[str, Any]] = []
+    company_search_evidence: list[dict[str, Any]] = []
     warnings: list[str] = []
     competitor_search_evidence: SearchEvidence | None = None
 
@@ -178,6 +198,7 @@ async def run_research(
             ) from exc
         company_name = official.name or query
         search_evidence.append({"query": official.evidence.query, "results": _evidence_search(official.evidence)})
+        company_search_evidence.append({"query": official.evidence.query, "results": _evidence_search(official.evidence)})
 
     if crawl_site is None:
         raise ResearchServiceError("CRAWLER_UNAVAILABLE", "Website crawler is unavailable.", retryable=True, status_code=503)
@@ -195,8 +216,6 @@ async def run_research(
         crawl = None
     facts, page_text, website_sources, crawl_warnings = _crawler_parts(crawl) if crawl is not None else ({}, "", [], [])
     warnings.extend(crawl_warnings)
-    if not page_text and not website_sources and not direct:
-        raise ResearchServiceError("INSUFFICIENT_EVIDENCE", "The official website did not provide enough evidence.", status_code=422)
 
     await _emit(progress, "searching", 55, "Checking public sources and competitors")
     if settings.serper_api_key:
@@ -210,6 +229,7 @@ async def run_research(
         enriched, competitors_search = await asyncio.gather(search_optional(enrich_q), search_optional(competitor_q))
         if enriched:
             search_evidence.append({"query": enriched.query, "results": _evidence_search(enriched)})
+            company_search_evidence.append({"query": enriched.query, "results": _evidence_search(enriched)})
             kg = enriched.knowledge_graph
             for key in ("phone", "address", "country", "industry"):
                 if kg.get(key) and not facts.get(key):
@@ -223,6 +243,12 @@ async def run_research(
             warnings.append("Competitor discovery was unavailable.")
     elif direct:
         warnings.append("Public search enrichment was unavailable; using website evidence.")
+    if not page_text and not website_sources and not _has_meaningful_company_evidence(company_search_evidence, facts):
+        raise ResearchServiceError(
+            "INSUFFICIENT_EVIDENCE",
+            "Public sources did not provide enough evidence to generate a reliable report.",
+            status_code=422,
+        )
 
 
     await _emit(progress, "analyzing", 75, "Generating structured insights")

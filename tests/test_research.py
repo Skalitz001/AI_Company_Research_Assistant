@@ -195,3 +195,137 @@ async def test_search_articles_cannot_become_competitor_websites(monkeypatch):
     ]
     assert all("news.example" not in item.website for item in report.competitors)
     assert all("directory.example" not in item.website for item in report.competitors)
+
+
+@pytest.mark.asyncio
+async def test_name_input_uses_serper_when_crawl_has_no_evidence(monkeypatch):
+    async def bypass_dns(value: str) -> str:
+        return crawler.normalize_url(value)
+
+    async def empty_crawl(client, root_url, settings):
+        return crawler.CrawlResult(
+            root_url=root_url,
+            warnings=["The site returned no meaningful static HTML."],
+        )
+
+    async def fake_search(self, query: str, *, num: int = 10) -> SearchEvidence:
+        if "competitors" in query.lower():
+            return SearchEvidence(
+                query=query,
+                knowledge_graph={},
+                organic=[
+                    {
+                        "title": "RivalCo",
+                        "link": "https://rivalco.example",
+                        "snippet": "A relevant workflow competitor.",
+                    }
+                ],
+            )
+        return SearchEvidence(
+            query=query,
+            knowledge_graph={},
+            organic=[
+                {
+                    "title": "Acme company",
+                    "link": "https://acme.example",
+                    "snippet": "Acme provides workflow software.",
+                }
+            ],
+        )
+
+    evidence = SearchEvidence(
+        query="Acme official website",
+        knowledge_graph={},
+        organic=[
+            {
+                "title": "Acme official",
+                "link": "https://acme.example",
+                "snippet": "The official Acme website.",
+            }
+        ],
+    )
+
+    async def fake_resolve(self, company: str) -> OfficialSite | None:
+        return OfficialSite("Acme", "https://acme.example", 0.95, evidence)
+
+    model_report = {
+        "company": {
+            "name": "Acme",
+            "website": "https://acme.example",
+            "phone": None,
+            "address": None,
+            "country": None,
+            "industry": None,
+        },
+        "summary": "Search evidence describes Acme.",
+        "products_services": ["Workflow software"],
+        "pain_points": [],
+        "competitors": [],
+        "sources": [],
+        "warnings": [],
+        "model_id": "ignored-by-service",
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": json.dumps(model_report)}}]},
+        )
+
+    monkeypatch.setattr(research_service, "validate_target_url", bypass_dns)
+    monkeypatch.setattr(research_service, "crawl_site", empty_crawl)
+    monkeypatch.setattr(research_service.SerperClient, "search", fake_search)
+    monkeypatch.setattr(research_service.SerperClient, "resolve_official_site", fake_resolve)
+    settings = Settings(openrouter_api_key="test-key", serper_api_key="serper-test")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        report = await research_service.run_research(
+            "Acme",
+            "openrouter/example-model",
+            client,
+            settings,
+        )
+
+    assert report.summary == "Search evidence describes Acme."
+
+
+@pytest.mark.asyncio
+async def test_direct_url_with_only_competitor_evidence_fails(monkeypatch):
+    async def bypass_dns(value: str) -> str:
+        return crawler.normalize_url(value)
+
+    async def empty_crawl(client, root_url, settings):
+        return crawler.CrawlResult(root_url=root_url)
+
+    async def unavailable_search(self, query: str, *, num: int = 10) -> SearchEvidence:
+        if "competitors" in query.lower():
+            return SearchEvidence(
+                query=query,
+                knowledge_graph={},
+                organic=[
+                    {
+                        "title": "Competitor article",
+                        "link": "https://news.example/acme-competitors",
+                        "snippet": "Competitor discussion only.",
+                    }
+                ],
+            )
+        raise research_service.SerperError(
+            "SERPER_UNAVAILABLE",
+            "Search provider unavailable.",
+        )
+    monkeypatch.setattr(research_service, "validate_target_url", bypass_dns)
+    monkeypatch.setattr(research_service, "crawl_site", empty_crawl)
+    monkeypatch.setattr(research_service.SerperClient, "search", unavailable_search)
+    settings = Settings(openrouter_api_key="test-key", serper_api_key="serper-test")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(500))) as client:
+        with pytest.raises(research_service.ResearchServiceError) as caught:
+            await research_service.run_research(
+                "https://acme.example",
+                "openrouter/example-model",
+                client,
+                settings,
+            )
+
+    assert caught.value.code == "INSUFFICIENT_EVIDENCE"
