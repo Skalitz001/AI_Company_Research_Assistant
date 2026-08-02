@@ -69,8 +69,16 @@ async def research(payload: ResearchRequest, request: Request):
 
     async def pipeline():
         try:
-            async with asyncio.timeout(75):
-                report = await run_research(payload.query, payload.model_id, request.app.state.http_client, settings, progress)
+            deadline = time.monotonic() + 75
+            async with asyncio.timeout_at(deadline):
+                report = await run_research(
+                    payload.query,
+                    payload.model_id,
+                    request.app.state.http_client,
+                    settings,
+                    progress,
+                    deadline=deadline,
+                )
             await queue.put(ResultEvent(report=report))
         except asyncio.TimeoutError:
             await queue.put(ErrorEvent(error=ResearchError(code="RESEARCH_TIMEOUT", message="Research took too long to complete.", retryable=True)))

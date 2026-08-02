@@ -14,6 +14,7 @@ from ..security.url import UnsafeURLError
 from ..schemas import Competitor, ProgressEvent, ResearchReport, Source
 from .openrouter import OpenRouterClient, OpenRouterError
 from .serper import SearchEvidence, SerperClient, SerperError
+MODEL_ATTEMPT_TIMEOUT_SECONDS = 30.0
 
 try:
     from .crawler import crawl_site, normalize_url, validate_target_url
@@ -201,6 +202,7 @@ async def run_research(
     client: httpx.AsyncClient,
     settings: Settings,
     progress: ProgressCallback | None = None,
+    deadline: float | None = None,
 ) -> ResearchReport:
     """Run one complete bounded research job. Callers enforce the global deadline."""
     query = query.strip()
@@ -312,6 +314,27 @@ async def run_research(
         candidates = [model_id] + [
             candidate for candidate in settings.model_suggestions if candidate != model_id
         ]
+
+        async def call_model(candidate: str) -> ResearchReport:
+            if deadline is None:
+                return await adapter.analyze(candidate, evidence)
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise OpenRouterError(
+                    "OPENROUTER_TIMEOUT",
+                    "The research time budget was exhausted before model analysis.",
+                    retryable=True,
+                )
+            try:
+                async with asyncio.timeout(min(MODEL_ATTEMPT_TIMEOUT_SECONDS, remaining)):
+                    return await adapter.analyze(candidate, evidence)
+            except asyncio.TimeoutError as exc:
+                raise OpenRouterError(
+                    "OPENROUTER_TIMEOUT",
+                    "The selected model did not respond within the research time budget.",
+                    retryable=True,
+                ) from exc
+
         last_error: OpenRouterError | None = None
         retryable_codes = {
             "MODEL_OUTPUT_INVALID",
@@ -322,7 +345,7 @@ async def run_research(
         }
         for candidate in candidates[:2]:
             try:
-                return await adapter.analyze(candidate, evidence), candidate
+                return await call_model(candidate), candidate
             except OpenRouterError as error:
                 last_error = error
                 if error.code not in retryable_codes:
