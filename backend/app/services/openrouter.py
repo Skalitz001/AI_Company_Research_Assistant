@@ -81,7 +81,8 @@ class OpenRouterClient:
         payload = {
             "model": model_id,
             "temperature": 0.1,
-            "max_tokens": 2000,
+            "reasoning": {"effort": "low"},
+            "max_tokens": 1200,
             "response_format": {"type": "json_object"},
             "messages": [
                 {

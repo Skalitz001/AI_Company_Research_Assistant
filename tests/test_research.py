@@ -480,20 +480,24 @@ async def test_invalid_json_falls_back_to_another_free_model(monkeypatch):
     settings = Settings(
         openrouter_api_key="test-key",
         serper_api_key=None,
-        openrouter_model_suggestions="openrouter/free,openai/gpt-oss-20b:free",
     )
 
     async with httpx.AsyncClient() as client:
         report = await research_service.run_research(
             "https://acme.example",
-            "openrouter/free",
+            "openai/gpt-oss-20b:free",
             client,
             settings,
         )
 
-    assert report.model_id == "openai/gpt-oss-20b:free"
+    assert settings.effective_default_model == "openai/gpt-oss-20b:free"
+    assert settings.model_suggestions[:2] == [
+        "openai/gpt-oss-20b:free",
+        "nvidia/nemotron-3-super-120b-a12b:free",
+    ]
+    assert report.model_id == "nvidia/nemotron-3-super-120b-a12b:free"
     assert FlakyAdapter.calls == [
-        ("openrouter/free", False),
-        ("openrouter/free", True),
         ("openai/gpt-oss-20b:free", False),
+        ("openai/gpt-oss-20b:free", True),
+        ("nvidia/nemotron-3-super-120b-a12b:free", False),
     ]
