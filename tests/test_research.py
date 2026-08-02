@@ -9,6 +9,7 @@ from backend.app.services import crawler
 from backend.app.security.url import UnsafeURLError
 from backend.app.services.serper import OfficialSite, SearchEvidence
 from backend.app.services import research as research_service
+from backend.app.services.openrouter import OpenRouterClient, OpenRouterError
 
 
 @pytest.mark.asyncio
@@ -53,7 +54,7 @@ async def test_direct_url_research_uses_async_safe_validation_and_exact_model(mo
 
     def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
-        assert payload["model"] == "openrouter/example-model"
+        assert payload["model"] == "openrouter/free"
         return httpx.Response(
             200,
             json={"choices": [{"message": {"content": json.dumps(model_report)}}]},
@@ -64,14 +65,14 @@ async def test_direct_url_research_uses_async_safe_validation_and_exact_model(mo
     async with httpx.AsyncClient(transport=transport, follow_redirects=False) as client:
         report = await research_service.run_research(
             "https://acme.example",
-            "openrouter/example-model",
+            "openrouter/free",
             client,
             settings,
         )
 
     assert report.company.name == "Acme"
     assert report.company.website == "https://acme.example/"
-    assert report.model_id == "openrouter/example-model"
+    assert report.model_id == "openrouter/free"
     assert report.competitors == []
     assert report.sources[0].url == "https://acme.example/"
 
@@ -93,7 +94,7 @@ async def test_unsafe_redirect_becomes_structured_error(monkeypatch):
         with pytest.raises(research_service.ResearchServiceError) as caught:
             await research_service.run_research(
                 "https://acme.example",
-                "openrouter/example-model",
+                "openrouter/free",
                 client,
                 settings,
             )
@@ -191,7 +192,7 @@ async def test_search_articles_cannot_become_competitor_websites(monkeypatch):
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         report = await research_service.run_research(
             "https://acme.example",
-            "openrouter/example-model",
+            "openrouter/free",
             client,
             settings,
         )
@@ -287,7 +288,7 @@ async def test_name_input_uses_serper_when_crawl_has_no_evidence(monkeypatch):
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         report = await research_service.run_research(
             "Acme",
-            "openrouter/example-model",
+            "openrouter/free",
             client,
             settings,
         )
@@ -329,7 +330,7 @@ async def test_direct_url_with_only_competitor_evidence_fails(monkeypatch):
         with pytest.raises(research_service.ResearchServiceError) as caught:
             await research_service.run_research(
                 "https://acme.example",
-                "openrouter/example-model",
+                "openrouter/free",
                 client,
                 settings,
             )
@@ -409,3 +410,17 @@ async def test_unrelated_model_name_is_not_resolved(monkeypatch):
     assert resolved == []
     assert calls == []
     assert warnings == ["Proposed competitor names were not present in competitor evidence."]
+
+
+@pytest.mark.asyncio
+async def test_openrouter_client_blocks_paid_model_before_request():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("paid model reached OpenRouter")
+
+    settings = Settings(openrouter_api_key="test-key")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        adapter = OpenRouterClient(client, settings)
+        with pytest.raises(OpenRouterError) as caught:
+            await adapter._call("openai/gpt-5", "test prompt")
+
+    assert caught.value.code == "MODEL_NOT_ALLOWED"

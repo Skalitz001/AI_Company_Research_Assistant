@@ -9,7 +9,7 @@ from typing import AsyncIterator
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from ..config import get_settings
+from ..config import get_settings, is_free_model_id
 from ..schemas import ErrorEvent, HeartbeatEvent, ProgressEvent, ResearchError, ResearchRequest, ResultEvent
 from ..services.research import ResearchServiceError, run_research
 
@@ -45,6 +45,15 @@ def _error_response(error: ResearchError, status: int) -> JSONResponse:
 @router.post("/research")
 async def research(payload: ResearchRequest, request: Request):
     settings = get_settings()
+    if not is_free_model_id(payload.model_id):
+        return _error_response(
+            ResearchError(
+                code="MODEL_NOT_ALLOWED",
+                message="Only free OpenRouter models are enabled.",
+                retryable=False,
+            ),
+            422,
+        )
     if not settings.openrouter_api_key:
         return _error_response(ResearchError(code="CONFIG_MISSING", message="OpenRouter is not configured.", retryable=False), 503)
     ip = request.client.host if request.client else "unknown"

@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 from pydantic import ValidationError
 
-from ..config import Settings
+from ..config import Settings, is_free_model_id
 from ..schemas import ResearchReport
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -48,6 +48,8 @@ class OpenRouterClient:
         self.settings = settings
 
     async def _call(self, model_id: str, prompt: str) -> str:
+        if not is_free_model_id(model_id):
+            raise OpenRouterError("MODEL_NOT_ALLOWED", "Only free OpenRouter models are enabled.")
         if not self.settings.openrouter_api_key:
             raise OpenRouterError("CONFIG_MISSING", "OpenRouter is not configured.")
         headers = {

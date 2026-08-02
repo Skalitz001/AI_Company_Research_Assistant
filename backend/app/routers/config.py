@@ -17,7 +17,7 @@ async def config() -> ConfigResponse:
     settings = get_settings()
     return ConfigResponse(
         ready=settings.providers_ready,
-        default_model=settings.openrouter_default_model,
+        default_model=settings.effective_default_model,
         model_suggestions=settings.model_suggestions,
         discord_enabled=settings.discord_enabled,
     )

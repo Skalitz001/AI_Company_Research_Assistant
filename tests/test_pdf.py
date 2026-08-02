@@ -27,7 +27,7 @@ def test_pdf_contains_required_sections_and_safe_filename():
                 {"title": "Home", "url": "https://acme.example", "source_type": "website"}
             ],
             "warnings": ["Search enrichment was unavailable."],
-            "model_id": "openrouter/example-model",
+            "model_id": "openrouter/free",
         }
     )
     data = render_pdf(report)

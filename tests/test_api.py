@@ -12,7 +12,7 @@ def test_research_route_streams_progress_and_result(monkeypatch):
     settings = Settings(
         serper_api_key="serper-test",
         openrouter_api_key="openrouter-test",
-        openrouter_default_model="openrouter/example-model",
+        openrouter_default_model="openrouter/free",
     )
     report = ResearchReport.model_validate(
         {
@@ -32,7 +32,7 @@ def test_research_route_streams_progress_and_result(monkeypatch):
                 {"title": "Acme", "url": "https://acme.example", "source_type": "website"}
             ],
             "warnings": [],
-            "model_id": "openrouter/example-model",
+            "model_id": "openrouter/free",
         }
     )
 
@@ -46,7 +46,7 @@ def test_research_route_streams_progress_and_result(monkeypatch):
     with TestClient(app) as client:
         response = client.post(
             "/api/v1/research",
-            json={"query": "Acme", "model_id": "openrouter/example-model"},
+            json={"query": "Acme", "model_id": "openrouter/free"},
         )
 
     assert response.status_code == 200
@@ -62,7 +62,7 @@ def test_direct_url_research_does_not_require_serper(monkeypatch):
     settings = Settings(
         serper_api_key=None,
         openrouter_api_key="openrouter-test",
-        openrouter_default_model="openrouter/example-model",
+        openrouter_default_model="openrouter/free",
     )
     report = ResearchReport.model_validate(
         {
@@ -82,7 +82,7 @@ def test_direct_url_research_does_not_require_serper(monkeypatch):
                 {"title": "Acme", "url": "https://acme.example", "source_type": "website"}
             ],
             "warnings": [],
-            "model_id": "openrouter/example-model",
+            "model_id": "openrouter/free",
         }
     )
     calls = []
@@ -97,10 +97,32 @@ def test_direct_url_research_does_not_require_serper(monkeypatch):
     with TestClient(app) as client:
         response = client.post(
             "/api/v1/research",
-            json={"query": "https://acme.example", "model_id": "openrouter/example-model"},
+            json={"query": "https://acme.example", "model_id": "openrouter/free"},
         )
 
     assert response.status_code == 200
     events = [json.loads(line) for line in response.text.splitlines() if line.strip()]
     assert events[-1]["type"] == "result"
-    assert calls == [("https://acme.example", "openrouter/example-model", None)]
+    assert calls == [("https://acme.example", "openrouter/free", None)]
+
+
+def test_paid_model_is_rejected_before_provider_call(monkeypatch):
+    settings = Settings(
+        serper_api_key="serper-test",
+        openrouter_api_key="openrouter-test",
+    )
+
+    async def should_not_run(*args, **kwargs):
+        raise AssertionError("paid model reached the research pipeline")
+
+    monkeypatch.setattr(research_router, "get_settings", lambda: settings)
+    monkeypatch.setattr(research_router, "run_research", should_not_run)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/research",
+            json={"query": "Acme", "model_id": "openai/gpt-5"},
+        )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "MODEL_NOT_ALLOWED"

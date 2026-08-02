@@ -5,6 +5,13 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+FREE_MODEL_ROUTER = "openrouter/free"
+
+
+def is_free_model_id(model_id: str) -> bool:
+    return model_id == FREE_MODEL_ROUTER or model_id.endswith(":free")
+
+
 
 class Settings(BaseSettings):
     """Runtime settings. Secrets are only read by the backend."""
@@ -18,9 +25,11 @@ class Settings(BaseSettings):
 
     serper_api_key: str | None = None
     openrouter_api_key: str | None = None
-    openrouter_default_model: str = "openrouter/auto"
+    openrouter_default_model: str = FREE_MODEL_ROUTER
     openrouter_model_suggestions: str = (
-        "openrouter/auto,openrouter/free,~openai/gpt-latest"
+        "openrouter/free,openai/gpt-oss-20b:free,"
+        "google/gemma-4-26b-a4b-it:free,"
+        "nvidia/nemotron-3-super-120b-a12b:free"
     )
     openrouter_app_url: str | None = None
     crawler_user_agent: str = "CompanyResearchAssistant/1.0 (+research crawler)"
@@ -29,9 +38,13 @@ class Settings(BaseSettings):
     port: int = 10000
 
     @property
+    def effective_default_model(self) -> str:
+        return self.openrouter_default_model if is_free_model_id(self.openrouter_default_model) else FREE_MODEL_ROUTER
+
+    @property
     def model_suggestions(self) -> list[str]:
         values = [item.strip() for item in self.openrouter_model_suggestions.split(",")]
-        return [item for item in values if item]
+        return [item for item in values if item and is_free_model_id(item)]
 
     @property
     def providers_ready(self) -> bool:
